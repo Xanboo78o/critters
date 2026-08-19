@@ -17,7 +17,7 @@ const CFG = {
   MUT: 0.04,              // gaussian sigma-ish per gene per birth
   MUT_BIG: 0.03,          // chance of a big jump
   MUT_BIG_S: 0.35,
-  SP_DIST: 0.65,          // gene distance from species founder -> new species
+  SP_DIST: 0.92,          // gene distance from species founder -> new species (scaled for form genes)
   SOFT_CAP: 3500,         // breeding pauses above this population
   DECIDE_EVERY: 6,
 };
@@ -42,12 +42,17 @@ function spName(w) {
 }
 
 // ---------- genes ----------
-// all genes 0..1:  siz size · spd speed · sen senses · hue color · diet 0=plants 1=meat · rep <0.5 splitter, >=0.5 mater
+// all genes 0..1
+// function: siz size · spd speed · sen senses · hue color · diet 0=plants 1=meat · rep <0.5 splitter, >=0.5 mater
+// form:     seg body segments · spik back spikes · legs leg pairs · tail tail style · eyes eye count · pat spots/stripes
+const FUNC_GENES = ['siz','spd','sen','diet','rep'];
+const FORM_GENES = ['seg','spik','legs','tail','eyes','pat'];
+const GENES = [...FUNC_GENES, 'hue', ...FORM_GENES];
 function gauss(r) { return r() + r() + r() - 1.5; } // ~N(0, 0.5)
 
 function mutate(w, g) {
   const r = w.rand, m = { ...g };
-  for (const k of ['siz','spd','sen','hue','diet','rep']) {
+  for (const k of GENES) {
     m[k] += gauss(r) * CFG.MUT * 2;
     if (r() < CFG.MUT_BIG) m[k] += gauss(r) * CFG.MUT_BIG_S * 2;
     if (k === 'hue') { m[k] = ((m[k] % 1) + 1) % 1; }
@@ -58,14 +63,15 @@ function mutate(w, g) {
 
 function mixGenes(w, a, b) {
   const r = w.rand, g = {};
-  for (const k of ['siz','spd','sen','hue','diet','rep']) g[k] = r() < 0.5 ? a[k] : b[k];
+  for (const k of GENES) g[k] = r() < 0.5 ? a[k] : b[k];
   return mutate(w, g);
 }
 
 function hueDist(a, b) { const d = Math.abs(a - b); return Math.min(d, 1 - d); }
 function geneDist(a, b) {
   let s = 0;
-  for (const k of ['siz','spd','sen','diet','rep']) { const d = a[k] - b[k]; s += d * d; }
+  for (const k of FUNC_GENES) { const d = a[k] - b[k]; s += d * d; }
+  for (const k of FORM_GENES) { const d = (a[k] - b[k]) * 0.8; s += d * d; }
   const hd = hueDist(a.hue, b.hue); s += hd * hd * 0.5;
   return Math.sqrt(s);
 }
@@ -188,14 +194,33 @@ function spawnCritter(w, x, y, g, sp, e) {
 function seedLife(w) {
   const r = w.rand;
   const seeds = [
-    { siz: 0.22, spd: 0.55, sen: 0.5, hue: 0.30, diet: 0.05, rep: 0.2 }, // small grazers
-    { siz: 0.5,  spd: 0.4,  sen: 0.45, hue: 0.09, diet: 0.4,  rep: 0.55 }, // mid omnivores (maters)
-    { siz: 0.35, spd: 0.7,  sen: 0.6, hue: 0.55, diet: 0.15, rep: 0.3 }, // quick foragers
+    // small round grazers: 2 leg pairs, plain
+    { siz: 0.22, spd: 0.55, sen: 0.5,  hue: 0.30, diet: 0.05, rep: 0.2,
+      seg: 0.1, spik: 0.0, legs: 0.5, tail: 0.3, eyes: 0.5, pat: 0.15 },
+    // mid omnivore maters: ant-like 3 segments, spotted, 3 eyes, spiky
+    { siz: 0.5,  spd: 0.4,  sen: 0.45, hue: 0.09, diet: 0.4,  rep: 0.55,
+      seg: 0.9, spik: 0.35, legs: 0.8, tail: 0.1, eyes: 0.85, pat: 0.55 },
+    // quick foragers: striped legless tadpoles with a club tail and one big eye
+    { siz: 0.35, spd: 0.7,  sen: 0.6,  hue: 0.55, diet: 0.15, rep: 0.3,
+      seg: 0.5, spik: 0.0, legs: 0.05, tail: 0.9, eyes: 0.1, pat: 0.85 },
+    // spiky tanks: big, slow, bristling
+    { siz: 0.68, spd: 0.25, sen: 0.35, hue: 0.42, diet: 0.1,  rep: 0.2,
+      seg: 0.15, spik: 0.9, legs: 0.6, tail: 0.05, eyes: 0.5, pat: 0.3 },
+    // spotted slugs: legless, sharp-eyed
+    { siz: 0.4,  spd: 0.3,  sen: 0.7,  hue: 0.75, diet: 0.2,  rep: 0.25,
+      seg: 0.35, spik: 0.0, legs: 0.0, tail: 0.4, eyes: 0.6, pat: 0.6 },
+    // rust darters: 4 leg pairs, 3 eyes, half-meat maters
+    { siz: 0.3,  spd: 0.85, sen: 0.55, hue: 0.02, diet: 0.5,  rep: 0.6,
+      seg: 0.6, spik: 0.15, legs: 0.9, tail: 0.6, eyes: 0.9, pat: 0.15 },
   ];
-  for (const base of seeds) {
+  // clusters on a ring around one shared spot, so the opening view is a mixed neighborhood
+  const ax = 900 + r() * (CFG.W - 1800), ay = 700 + r() * (CFG.H - 1400);
+  for (let s = 0; s < seeds.length; s++) {
+    const base = seeds[s];
     const sp = newSpecies(w, base, null);
-    const cx = 300 + r() * (CFG.W - 600), cy = 300 + r() * (CFG.H - 600);
-    for (let i = 0; i < 46; i++) {
+    const ang = (s / seeds.length) * Math.PI * 2 + r();
+    const cx = ax + Math.cos(ang) * 450, cy = ay + Math.sin(ang) * 450;
+    for (let i = 0; i < 32; i++) {
       const g = mutate(w, base);
       let x = cx + gauss(r) * 260, y = cy + gauss(r) * 260;
       x = Math.min(CFG.W - 30, Math.max(30, x)); y = Math.min(CFG.H - 30, Math.max(30, y));

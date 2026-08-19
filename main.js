@@ -21,7 +21,7 @@ resize();
 // open the camera on a living cluster
 const cam = { x: CFG.W / 2, y: CFG.H / 2, z: 0.7 };
 {
-  let sx = 0, sy = 0, n = Math.min(40, world.critters.length);
+  let sx = 0, sy = 0, n = world.critters.length;
   for (let i = 0; i < n; i++) { sx += world.critters[i].x; sy += world.critters[i].y; }
   if (n) { cam.x = sx / n; cam.y = sy / n; }
   const zq = new URLSearchParams(location.search).get('z');
@@ -74,32 +74,50 @@ function drawCritter(c, ox, oy, z) {
   }
   const fill = `hsl(${h} 38% 51%)`;
   const line = `hsl(${h} 40% 39%)`; // outline = darker shade of the fill, never black
+  const dark = `hsl(${h} 30% 21%)`;
   const dx = Math.cos(c.dir), dy = Math.sin(c.dir);
   const px = -dy, py = dx;
   const rx = r * (1 + g.spd * 0.4);  // fast = sleek
   const ry = r * (1 - g.spd * 0.18);
   const ph = c.id * 1.7 + world.tick * 0.22;
+  const lw = Math.max(1, r * 0.16);
   ctx.fillStyle = fill;
   ctx.strokeStyle = line;
-  ctx.lineWidth = Math.max(1, r * 0.16);
+  ctx.lineWidth = lw;
 
-  // tail — longer on fast critters, swishes as they go
-  const tl = r * (0.5 + g.spd * 1.3);
-  const tw = Math.sin(ph) * r * 0.35;
-  ctx.beginPath();
-  ctx.moveTo(sx - dx * rx * 0.8, sy - dy * rx * 0.8);
-  ctx.quadraticCurveTo(
-    sx - dx * (rx + tl * 0.5), sy - dy * (rx + tl * 0.5),
-    sx - dx * (rx + tl) + px * tw, sy - dy * (rx + tl) + py * tw);
-  ctx.stroke();
+  // body plan from the seg gene: 1 blob / head+abdomen / ant-like 3 segments
+  // each segment: [offset along dir (in rx), rx scale, ry scale]
+  let segs;
+  if (g.seg < 0.33)      segs = [[0, 1, 1]];
+  else if (g.seg < 0.66) segs = [[-0.38, 0.78, 1], [0.5, 0.55, 0.75]];
+  else                   segs = [[-0.5, 0.62, 0.98], [0.06, 0.44, 0.7], [0.58, 0.42, 0.62]];
+  const head = segs[segs.length - 1], rear = segs[0];
+  const headX = sx + dx * rx * head[0], headY = sy + dy * rx * head[0];
+  const headRx = rx * head[1], headRy = ry * head[2];
+  const rearX = sx + dx * rx * rear[0], rearY = sy + dy * rx * rear[0];
+  const rearRx = rx * rear[1], rearRy = ry * rear[2];
 
-  // legs — stubby paddlers, extra pair on fast critters
-  if (r > 4) {
-    const pairs = g.spd > 0.55 ? 3 : 2;
-    const ll = r * (0.35 + g.spd * 0.3);
+  // tail — its own gene: none / whip / club at the tip
+  if (g.tail > 0.15) {
+    const tl = r * g.tail * 2.2;
+    const tw = Math.sin(ph) * r * 0.35;
+    const tipX = rearX - dx * (rearRx + tl) + px * tw, tipY = rearY - dy * (rearRx + tl) + py * tw;
+    ctx.beginPath();
+    ctx.moveTo(rearX - dx * rearRx * 0.8, rearY - dy * rearRx * 0.8);
+    ctx.quadraticCurveTo(rearX - dx * (rearRx + tl * 0.5), rearY - dy * (rearRx + tl * 0.5), tipX, tipY);
+    ctx.stroke();
+    if (g.tail > 0.72) { // club tail
+      ctx.beginPath(); ctx.arc(tipX, tipY, r * 0.32, 0, 7); ctx.fill(); ctx.stroke();
+    }
+  }
+
+  // legs — their own gene: 0 pairs = slug, up to 4 paddling pairs
+  const pairs = Math.round(g.legs * 4);
+  if (r > 4 && pairs > 0) {
+    const ll = r * (0.3 + g.legs * 0.4);
     ctx.lineWidth = Math.max(1, r * 0.14);
     for (let i = 0; i < pairs; i++) {
-      const along = (i / (pairs - 1) - 0.5) * rx * 1.05;
+      const along = (pairs === 1 ? 0 : (i / (pairs - 1) - 0.5)) * rx * 1.05;
       const swing = Math.sin(ph + i * 2.1) * 0.55;
       for (const s of [1, -1]) {
         const ax = sx + dx * along + px * s * ry * 0.8;
@@ -110,22 +128,74 @@ function drawCritter(c, ox, oy, z) {
         ctx.stroke();
       }
     }
-    ctx.lineWidth = Math.max(1, r * 0.16);
+    ctx.lineWidth = lw;
+  }
+
+  // back spikes — thorny flanks on the rear segment
+  if (r > 4 && g.spik > 0.25) {
+    const n = 2 + Math.round(g.spik * 3);
+    const sl = r * (0.25 + g.spik * 0.5);
+    for (let i = 0; i < n; i++) {
+      const t = (i / (n - 1) - 0.5) * 1.3;
+      const bx = rearX + dx * rearRx * t * 0.8, by = rearY + dy * rearRx * t * 0.8;
+      const wHere = rearRy * Math.sqrt(Math.max(0.05, 1 - t * t)) * 0.9;
+      for (const s of [1, -1]) {
+        const ax = bx + px * s * wHere, ay = by + py * s * wHere;
+        ctx.beginPath();
+        ctx.moveTo(ax + dx * r * 0.14, ay + dy * r * 0.14);
+        ctx.lineTo(ax + (px * s - dx * 0.5) * sl, ay + (py * s - dy * 0.5) * sl);
+        ctx.lineTo(ax - dx * r * 0.14, ay - dy * r * 0.14);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+      }
+    }
   }
 
   if (g.diet > 0.55) { // hunter snout
     ctx.beginPath();
-    ctx.moveTo(sx + dx * rx * 1.5, sy + dy * rx * 1.5);
-    ctx.lineTo(sx + dx * rx * 0.35 + px * ry * 0.5, sy + dy * rx * 0.35 + py * ry * 0.5);
-    ctx.lineTo(sx + dx * rx * 0.35 - px * ry * 0.5, sy + dy * rx * 0.35 - py * ry * 0.5);
+    ctx.moveTo(headX + dx * headRx * 1.7, headY + dy * headRx * 1.7);
+    ctx.lineTo(headX + dx * headRx * 0.3 + px * headRy * 0.6, headY + dy * headRx * 0.3 + py * headRy * 0.6);
+    ctx.lineTo(headX + dx * headRx * 0.3 - px * headRy * 0.6, headY + dy * headRx * 0.3 - py * headRy * 0.6);
     ctx.closePath();
     ctx.fill(); ctx.stroke();
   }
 
-  // body
-  ctx.beginPath();
-  ctx.ellipse(sx, sy, rx, ry, c.dir, 0, 7);
-  ctx.fill(); ctx.stroke();
+  // body segments, rear to front so the head overlaps
+  for (const [off, kx, ky] of segs) {
+    ctx.beginPath();
+    ctx.ellipse(sx + dx * rx * off, sy + dy * rx * off, rx * kx, ry * ky, c.dir, 0, 7);
+    ctx.fill(); ctx.stroke();
+  }
+
+  // pattern — spots or stripes in the darker shade, on the rear segment
+  if (r > 4.5 && g.pat > 0.4) {
+    ctx.fillStyle = line;
+    ctx.globalAlpha = 0.55;
+    if (g.pat > 0.72) { // stripes
+      const n = 2 + (g.pat > 0.88 ? 1 : 0);
+      ctx.lineWidth = Math.max(1, r * 0.16);
+      for (let i = 0; i < n; i++) {
+        const t = (i / (n - 1) - 0.5) * 1.1;
+        const wHere = rearRy * Math.sqrt(Math.max(0.05, 1 - t * t)) * 0.8;
+        const bx = rearX + dx * rearRx * t * 0.8, by = rearY + dy * rearRx * t * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(bx + px * wHere, by + py * wHere);
+        ctx.lineTo(bx - px * wHere, by - py * wHere);
+        ctx.stroke();
+      }
+      ctx.lineWidth = lw;
+    } else { // spots
+      const n = 3 + Math.round(g.pat * 3);
+      for (let i = 0; i < n; i++) {
+        const a = i * 2.4 + c.id, rr = Math.sqrt((i + 0.5) / n);
+        ctx.beginPath();
+        ctx.arc(rearX + Math.cos(a) * rearRx * 0.55 * rr, rearY + Math.sin(a) * rearRy * 0.55 * rr, r * 0.14, 0, 7);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = fill;
+  }
 
   if (r > 4) {
     if (g.rep < 0.5) { // splitter — faint division seam
@@ -136,7 +206,7 @@ function drawCritter(c, ox, oy, z) {
       ctx.stroke();
       ctx.globalAlpha = 1;
     } else { // mater — little antennae
-      const bx = sx + dx * rx * 0.72, by = sy + dy * rx * 0.72;
+      const bx = headX + dx * headRx * 0.6, by = headY + dy * headRx * 0.6;
       ctx.lineWidth = Math.max(1, r * 0.1);
       ctx.fillStyle = line;
       for (const s of [1, -1]) {
@@ -146,17 +216,29 @@ function drawCritter(c, ox, oy, z) {
         ctx.beginPath(); ctx.arc(tx, ty, r * 0.1 + 0.8, 0, 7); ctx.fill();
       }
       ctx.fillStyle = fill;
-      ctx.lineWidth = Math.max(1, r * 0.16);
+      ctx.lineWidth = lw;
     }
   }
 
-  // eyes — bigger with better senses
-  const er = r * (0.13 + g.sen * 0.2);
-  ctx.fillStyle = `hsl(${h} 30% 21%)`;
-  for (const s of [1, -1]) {
+  // eyes — count is a gene, size grows with senses
+  const er = Math.max(1, r * (0.13 + g.sen * 0.2));
+  const nEyes = g.eyes < 0.25 ? 1 : g.eyes < 0.7 ? 2 : 3;
+  ctx.fillStyle = dark;
+  if (nEyes === 1) { // cyclops
     ctx.beginPath();
-    ctx.arc(sx + dx * rx * 0.5 + px * s * ry * 0.45, sy + dy * rx * 0.5 + py * s * ry * 0.45, er, 0, 7);
+    ctx.arc(headX + dx * headRx * 0.45, headY + dy * headRx * 0.45, er * 1.4, 0, 7);
     ctx.fill();
+  } else {
+    for (const s of [1, -1]) {
+      ctx.beginPath();
+      ctx.arc(headX + dx * headRx * 0.4 + px * s * headRy * 0.5, headY + dy * headRx * 0.4 + py * s * headRy * 0.5, er, 0, 7);
+      ctx.fill();
+    }
+    if (nEyes === 3) {
+      ctx.beginPath();
+      ctx.arc(headX + dx * headRx * 0.75, headY + dy * headRx * 0.75, er * 0.8, 0, 7);
+      ctx.fill();
+    }
   }
 }
 
