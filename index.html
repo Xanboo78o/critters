@@ -9,9 +9,21 @@
   #cv { position:fixed; inset:0; display:block; }
   .bar { position:fixed; display:flex; gap:6px; padding:6px 8px; background:#4a4032e6; border-radius:14px; box-shadow:0 2px 10px #00000030; }
   #tools { top:10px; left:50%; transform:translateX(-50%); }
-  #tools2 { top:62px; left:50%; transform:translateX(-50%); }
   #speed { top:10px; right:10px; }
   #brushSlider { width:90px; accent-color:#8a9a56; align-self:center; }
+  #matMenu { position:fixed; top:62px; left:50%; transform:translateX(-50%); width:470px;
+    background:#4a4032ee; border-radius:14px; padding:10px 12px; display:none; color:#efe6cf;
+    box-shadow:0 2px 10px #00000030; }
+  #matTabs { display:flex; gap:4px; margin-bottom:8px; flex-wrap:wrap; }
+  #matTabs button { width:auto; padding:0 12px; height:26px; font-size:12px; border:0; border-radius:8px;
+    background:#5d5140; color:#efe6cf; cursor:pointer; }
+  #matTabs button.on { background:#8a9a56; }
+  #matGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .mat { display:flex; align-items:center; gap:7px; background:#5d5140; border:0; border-radius:8px;
+    padding:7px 9px; color:#efe6cf; font-size:12px; cursor:pointer; text-align:left; }
+  .mat:hover { background:#6d5f4a; }
+  .mat.on { background:#8a9a56; }
+  .mat .chip { width:15px; height:15px; border-radius:4px; flex:none; box-shadow: inset 0 0 0 1.5px #00000028; }
   .bar button { border:0; border-radius:9px; background:#5d5140; color:#efe6cf; font-size:17px; width:38px; height:38px; cursor:pointer; }
   .bar button.on { background:#8a9a56; }
   .bar button:hover { background:#6d5f4a; }
@@ -48,16 +60,12 @@
   <button data-tool="fert+" title="fertile soil — food grows (4)">🌿</button>
   <button data-tool="fert-" title="famine — soil dies (5)">🏜️</button>
   <button data-tool="erase" title="erase terrain (6)">🧽</button>
+  <button id="matBtn" title="the material table (m)">🧪</button>
   <input type="range" id="brushSlider" min="20" max="280" value="55" title="brush size ( [ and ] )">
 </div>
-<div id="tools2" class="bar">
-  <button data-tool="blood" title="bloodstone — deaths on it become sacrifices">🩸</button>
-  <button data-tool="uran" title="uranium — radiation: burns now, mutates the next generation">☢️</button>
-  <button data-tool="ice" title="ice — fast but slippery and cold">🧊</button>
-  <button data-tool="lava" title="lava — cremates on contact, cools into rock">🌋</button>
-  <button data-tool="salt" title="salt — sterile ground, stings to cross">🧂</button>
-  <button data-tool="goo" title="goo — a trap that barely lets go">🍯</button>
-  <button data-tool="gas" title="toxin gas — a poison cloud that rides the wind">💨</button>
+<div id="matMenu">
+  <div id="matTabs"></div>
+  <div id="matGrid"></div>
 </div>
 <div id="speed" class="bar">
   <button data-spd="0" title="pause (space)">⏸</button>

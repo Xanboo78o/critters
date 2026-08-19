@@ -28,7 +28,8 @@ const ACH_DEFS = [
   ['apex', 'Apex', 'one critter made 10 kills'],
   ['boom', 'Boom', '2000 alive at once'],
   ['cooked', 'Well Done', 'something touched lava'],
-  ['chemist', 'Alchemist', 'painted every single material'],
+  ['void', 'Devoured', 'the void ate something'],
+  ['chemist', 'Alchemist', 'painted 12 different materials'],
   ['sacrifice', 'First Sacrifice', 'the bloodstone drank a life'],
   ['cult', 'Cult Following', '25 sacrifices accepted'],
   ['hotblood', 'Children of the Atom', 'a child born mutated by radiation'],
@@ -76,21 +77,9 @@ function toWorld(sx, sy) {
   return [cam.x + (sx - innerWidth / 2) / cam.z, cam.y + (sy - innerHeight / 2) / cam.z];
 }
 
-// ---------- chunk terrain rendering ----------
+// ---------- chunk terrain rendering (colors come from the material table) ----------
 const chunkCanvases = new Map();
-const T_COLORS = {
-  1: [146, 128, 104],  // painted wall
-  2: [108, 167, 158],  // water
-  4: [126, 116, 104],  // rock
-  5: [151, 130, 99],   // mud
-  6: [168, 196, 122],  // glowmoss (farlands)
-  7: [124, 66, 62],    // bloodstone
-  8: [172, 172, 92],   // uranium
-  9: [186, 209, 211],  // ice
-  10: [186, 96, 58],   // lava
-  11: [214, 208, 190], // salt
-  12: [176, 148, 82],  // goo
-};
+const SPECKLE = { metal: 24, rock: 14, strange: 16, soil: 8, liquid: 6 };
 function chunkCanvas(cx, cy) {
   const key = cx + ',' + cy;
   let c = chunkCanvases.get(key);
@@ -105,11 +94,11 @@ function chunkCanvas(cx, cy) {
     const t = ch.terrain[i];
     let r, g, b;
     if (t !== 0) {
-      [r, g, b] = T_COLORS[t];
-      if (t >= 7) { // mineral speckle
-        const v = ((Math.imul(i + 7, 2654435761) >>> 8) % 26) - 13;
-        r += v; g += v; b += v;
-      }
+      const m = MATS[t] || MATS[0];
+      [r, g, b] = m.col;
+      const amp = SPECKLE[m.cat] || 10;
+      const v = ((Math.imul(i + 7, 2654435761) >>> 8) % (amp * 2)) - amp;
+      r += v; g += v; b += v;
     } else {
       const f = Math.min(1, ch.fert[i]) * 0.55;
       r = 217 + (148 - 217) * f;
@@ -430,11 +419,10 @@ function draw() {
   }
 
   // the gas layer rides above everything alive
-  const GAS_COLORS = { tox: '150,160,70', mia: '120,130,105', smoke: '110,105,95' };
   for (const p of world.gas) {
     if (p.x < vx0 - 60 || p.x > vx1 + 60 || p.y < vy0 - 60 || p.y > vy1 + 60) continue;
     ctx.globalAlpha = Math.min(0.3, p.amt * 0.28);
-    ctx.fillStyle = `rgb(${GAS_COLORS[p.type] || GAS_COLORS.tox})`;
+    ctx.fillStyle = `rgb(${(GASES[p.type] || GASES.smoke).col})`;
     ctx.beginPath();
     ctx.arc(ox + p.x * z, oy + p.y * z, (30 + (1 - p.amt) * 34) * z, 0, 7);
     ctx.fill();
@@ -552,16 +540,64 @@ function brushR() { return brushSize; }
 
 const usedTools = new Set(JSON.parse(localStorage.getItem('crittersTools') || '[]'));
 function applyPaint(wx, wy) {
-  if (tool === 'gas') paintGas(world, wx, wy, brushR());
+  let key = tool;
+  if (tool === 'gas') { paintGas(world, wx, wy, brushR(), curGas); key = 'gas:' + curGas; }
+  else if (tool === 'mat') { paint(world, curMat, wx, wy, brushR()); key = 'mat:' + curMat; }
   else paint(world, tool, wx, wy, brushR());
-  if (!usedTools.has(tool)) {
-    usedTools.add(tool);
+  if (!usedTools.has(key)) {
+    usedTools.add(key);
     localStorage.setItem('crittersTools', JSON.stringify([...usedTools]));
-    if (['wall','water','fert+','fert-','blood','uran','ice','lava','salt','goo','gas'].every((t) => usedTools.has(t)))
-      unlock('chemist');
+    if (usedTools.size >= 12) unlock('chemist');
   }
   if (++paintFrames === 400) unlock('painter');
 }
+
+// ---------- the material table menu ----------
+let curMat = 10, curGas = 'tox';
+const matMenu = document.getElementById('matMenu');
+const matTabs = document.getElementById('matTabs');
+const matGrid = document.getElementById('matGrid');
+const MAT_CATS = ['soil', 'rock', 'metal', 'liquid', 'strange', 'gas'];
+let curCat = 'liquid';
+
+function renderMatGrid() {
+  matTabs.innerHTML = MAT_CATS.map((c) =>
+    `<button data-cat="${c}" class="${c === curCat ? 'on' : ''}">${c}</button>`).join('');
+  let html = '';
+  if (curCat === 'gas') {
+    for (const [id, g] of Object.entries(GASES)) {
+      if (id === 'mia' || id === 'smoke') continue; // those two the world makes itself
+      const on = tool === 'gas' && curGas === id;
+      html += `<button class="mat ${on ? 'on' : ''}" data-gas="${id}">` +
+        `<span class="chip" style="background:rgb(${g.col})"></span>${g.name}</button>`;
+    }
+  } else {
+    for (const [id, m] of Object.entries(MATS)) {
+      if (m.cat !== curCat || +id === 0) continue;
+      const on = tool === 'mat' && curMat === +id;
+      html += `<button class="mat ${on ? 'on' : ''}" data-mat="${id}">` +
+        `<span class="chip" style="background:rgb(${m.col.join(',')})"></span>${m.name}</button>`;
+    }
+  }
+  matGrid.innerHTML = html;
+}
+
+matTabs.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-cat]');
+  if (b) { curCat = b.dataset.cat; renderMatGrid(); }
+});
+matGrid.addEventListener('click', (e) => {
+  const b = e.target.closest('button.mat');
+  if (!b) return;
+  if (b.dataset.gas) { curGas = b.dataset.gas; setTool('gas'); }
+  else { curMat = +b.dataset.mat; setTool('mat'); }
+  renderMatGrid();
+});
+document.getElementById('matBtn').addEventListener('click', () => {
+  matMenu.style.display = matMenu.style.display === 'block' ? 'none' : 'block';
+  renderMatGrid();
+});
+renderMatGrid();
 
 cv.addEventListener('pointerdown', (e) => {
   cv.setPointerCapture(e.pointerId);
@@ -607,10 +643,15 @@ cv.addEventListener('wheel', (e) => {
   cam.x += wx - wx2; cam.y += wy - wy2;
 }, { passive: false });
 
-const toolBtns = document.querySelectorAll('#tools button, #tools2 button');
+const toolBtns = document.querySelectorAll('#tools button[data-tool]');
+const matBtnEl = document.getElementById('matBtn');
 function setTool(t) {
   tool = t;
   toolBtns.forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
+  matBtnEl.classList.toggle('on', t === 'mat' || t === 'gas');
+  matBtnEl.textContent = t === 'mat' ? '🧪' : t === 'gas' ? '💨' : '🧪';
+  matBtnEl.title = t === 'mat' ? `painting: ${MATS[curMat].name}` :
+    t === 'gas' ? `painting: ${GASES[curGas].name}` : 'the material table (m)';
   cv.style.cursor = t === 'look' ? 'default' : 'crosshair';
 }
 toolBtns.forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
@@ -637,6 +678,10 @@ addEventListener('keydown', (e) => {
   if (tools[e.code]) setTool(tools[e.code]);
   if (e.code === 'BracketLeft') setBrush(brushSize - 15);
   if (e.code === 'BracketRight') setBrush(brushSize + 15);
+  if (e.code === 'KeyM') {
+    matMenu.style.display = matMenu.style.display === 'block' ? 'none' : 'block';
+    renderMatGrid();
+  }
 });
 
 // ---------- loop ----------

@@ -29,6 +29,62 @@ const CFG = {
   GAS_CAP: 700,           // max gas puffs alive
 };
 
+// ---------- THE MATERIAL TABLE ----------
+// Every terrain cell is one material id; props compose the physics:
+// block (can't enter) · swim (liquid, swimmers only) · speed/turn (movement multipliers)
+// drain (energy/tick standing in it, negative HEALS) · kill (cremates; silent = no smoke, no instinct)
+// rad (radiation) · mut (mutation aura, no damage) · sac (deaths become sacrifices)
+// grow (plants sprout) · fertFix (fixed fertility) · dig (burrowable) · cool {to,p} (converts over time)
+const MATS = {
+  0:  { name: 'ground',     cat: 'soil',    col: [217, 203, 164], grow: true, dig: true },
+  14: { name: 'sand',       cat: 'soil',    col: [214, 196, 150], grow: true, dig: true, fertFix: 0.12 },
+  13: { name: 'clay',       cat: 'soil',    col: [166, 124, 100], grow: true, dig: true, fertFix: 0.25 },
+  15: { name: 'loam',       cat: 'soil',    col: [138, 120, 84],  grow: true, dig: true, fertFix: 1.0 },
+  16: { name: 'ash',        cat: 'soil',    col: [150, 142, 132], grow: true, dig: true, fertFix: 0.9 },
+  5:  { name: 'mud',        cat: 'soil',    col: [151, 130, 99],  grow: true, dig: true, speed: 0.55, fertFix: 0.85 },
+  17: { name: 'permafrost', cat: 'soil',    col: [180, 190, 190], grow: true, dig: true, fertFix: 0.05, drain: 0.03, speed: 0.85 },
+  11: { name: 'salt',       cat: 'soil',    col: [214, 208, 190], drain: 0.05 },
+  1:  { name: 'wall',       cat: 'rock',    col: [146, 128, 104], block: true },
+  4:  { name: 'rock',       cat: 'rock',    col: [126, 116, 104], block: true },
+  18: { name: 'granite',    cat: 'rock',    col: [140, 130, 125], block: true },
+  19: { name: 'basalt',     cat: 'rock',    col: [95, 90, 88],    block: true },
+  20: { name: 'obsidian',   cat: 'rock',    col: [70, 62, 72],    block: true },
+  21: { name: 'sandstone',  cat: 'rock',    col: [196, 176, 136], block: true },
+  22: { name: 'marble',     cat: 'rock',    col: [208, 204, 196], block: true },
+  38: { name: 'coal',       cat: 'rock',    col: [66, 60, 56],    block: true },
+  23: { name: 'iron',       cat: 'metal',   col: [136, 138, 142], block: true },
+  24: { name: 'copper',     cat: 'metal',   col: [168, 118, 90],  block: true },
+  25: { name: 'gold',       cat: 'metal',   col: [188, 158, 80],  block: true },
+  26: { name: 'silver',     cat: 'metal',   col: [190, 192, 196], block: true },
+  27: { name: 'lead',       cat: 'metal',   col: [110, 112, 120], block: true },
+  8:  { name: 'uranium',    cat: 'metal',   col: [172, 172, 92],  rad: 1 },
+  28: { name: 'plutonium',  cat: 'metal',   col: [152, 164, 128], rad: 2.5 },
+  29: { name: 'mercury',    cat: 'metal',   col: [154, 158, 164], swim: true, drain: 0.3 },
+  2:  { name: 'water',      cat: 'liquid',  col: [108, 167, 158], swim: true },
+  30: { name: 'deep water', cat: 'liquid',  col: [86, 140, 134],  swim: true, speed: 0.8, drain: 0.02 },
+  33: { name: 'brine',      cat: 'liquid',  col: [130, 168, 158], swim: true, drain: 0.08 },
+  31: { name: 'acid',       cat: 'liquid',  col: [148, 168, 96],  swim: true, drain: 0.5 },
+  32: { name: 'tar',        cat: 'liquid',  col: [78, 72, 66],    swim: true, speed: 0.15, drain: 0.05 },
+  10: { name: 'lava',       cat: 'liquid',  col: [186, 96, 58],   kill: true, cool: { to: 4, p: 0.04 } },
+  9:  { name: 'ice',        cat: 'liquid',  col: [186, 209, 211], speed: 1.35, turn: 0.3, drain: 0.06 },
+  12: { name: 'goo',        cat: 'liquid',  col: [176, 148, 82],  speed: 0.22 },
+  6:  { name: 'glowmoss',   cat: 'strange', col: [168, 196, 122], grow: true, dig: true, fertFix: 1.3 },
+  7:  { name: 'bloodstone', cat: 'strange', col: [124, 66, 62],   sac: true, dig: true },
+  34: { name: 'ichor',      cat: 'strange', col: [140, 80, 86],   swim: true, drain: -0.25 },
+  35: { name: 'void',       cat: 'strange', col: [52, 48, 58],    kill: true, silent: true },
+  36: { name: 'mutagen',    cat: 'strange', col: [122, 150, 146], mut: 2 },
+  37: { name: 'crystal',    cat: 'strange', col: [172, 182, 198], block: true },
+};
+
+const GASES = {
+  tox:   { name: 'toxin',     col: '150,160,70',  dmg: 0.6 },
+  spore: { name: 'spore',     col: '128,150,88',  seed: true },
+  pher:  { name: 'pheromone', col: '190,140,150', lure: true },
+  dizzy: { name: 'dizzy gas', col: '170,160,190', confuse: true },
+  smoke: { name: 'smoke',     col: '110,105,95' },
+  mia:   { name: 'miasma',    col: '120,130,105' },
+};
+
 // ---------- rng + noise ----------
 function mulberry32(a) {
   return function () {
@@ -94,7 +150,7 @@ function mixGenes(w, a, b, scale) {
 }
 
 // how hard this critter's children mutate right now
-function mutScale(c) { return (1 + (c.bb || 0) * 1.2) * (1 + (c.rad || 0) * 2.5); }
+function mutScale(c) { return (1 + (c.bb || 0) * 1.2) * (1 + (c.rad || 0) * 2.5) * (1 + (c.tmut || 0)); }
 // blood auras let you breed at lower energy
 function reproAt(c) { return CFG.REPRO_AT * (1 - 0.25 * Math.min(1, c.bb || 0)); }
 
@@ -190,16 +246,15 @@ function cellOf(w, x, y) {
 function terrAt(w, x, y) { const [ch, k] = cellOf(w, x, y); return ch.terrain[k]; }
 
 function passableFor(w, c, x, y) {
-  const t = terrAt(w, x, y);
-  if (t === 1 || t === 4) return false;
-  if (t === 10) return false; // heat instinct — they won't walk into lava (paint it UNDER them...)
-  if (t === 2) return c.swimV > 0;
+  const d = matAt(w, x, y);
+  if (d.block) return false;
+  if (d.kill && !d.silent) return false; // heat instinct — but nothing warns them about the void
+  if (d.swim) return c.swimV > 0;
   return true;
 }
 
-// terrain 7 bloodstone (deaths = sacrifices) · 8 uranium (radiation) · 9 ice (fast + slippery + cold)
-// 10 lava (cremates, cools to rock) · 11 salt (sterile, stings) · 12 goo (trap)
-function openGround(w, x, y) { const t = terrAt(w, x, y); return t === 0 || t === 5 || t === 6 || t === 7; }
+function matAt(w, x, y) { return MATS[terrAt(w, x, y)] || MATS[0]; }
+function openGround(w, x, y) { return !!matAt(w, x, y).dig; }
 
 function findSpawn(w) {
   for (let rad = 0; rad < 40; rad++) {
@@ -369,15 +424,16 @@ function growPlants(w, cx0, cy0, cx1, cy1) {
     const ch = getChunk(w, cx, cy);
     const k = (r() * CFG.CH * CFG.CH) | 0;
     const t = ch.terrain[k];
-    if (t === 10 && r() < 0.04) { // lava cools into rock
-      ch.terrain[k] = 4;
+    const def = MATS[t] || MATS[0];
+    if (def.cool && r() < def.cool.p) { // e.g. lava cools into rock
+      ch.terrain[k] = def.cool.to;
       w.dirty.add(chunkKey(cx, cy));
       if (r() < 0.4) emitGas(w, cx * CFG.CHPX + (k % CFG.CH) * CFG.CS, cy * CFG.CHPX + ((k / CFG.CH) | 0) * CFG.CS, 'smoke', 0.6);
       continue;
     }
     if (ch.plants.length >= CFG.PLANT_CHUNK_CAP) continue;
-    if (t !== 0 && t !== 6) continue;
-    const f = t === 6 ? 1.3 : ch.fert[k];
+    if (!def.grow) continue;
+    const f = def.fertFix !== undefined ? def.fertFix : ch.fert[k];
     if (r() > f * 0.55) continue;
     addPlant(w, ch, cx * CFG.CHPX + (k % CFG.CH) * CFG.CS + r() * CFG.CS,
                     cy * CFG.CHPX + ((k / CFG.CH) | 0) * CFG.CS + r() * CFG.CS);
@@ -385,12 +441,12 @@ function growPlants(w, cx0, cy0, cx1, cy1) {
 }
 
 // ---------- gases ----------
-function paintGas(w, x, y, rad) {
+function paintGas(w, x, y, rad, type) {
   const r = w.rand;
   for (let i = 0; i < 3; i++) {
     if (w.gas.length >= CFG.GAS_CAP) w.gas.shift();
     w.gas.push({ x: x + gauss(r) * rad * 0.5, y: y + gauss(r) * rad * 0.5,
-      vx: gauss(r) * 0.3, vy: gauss(r) * 0.3, amt: 1, type: 'tox' });
+      vx: gauss(r) * 0.3, vy: gauss(r) * 0.3, amt: 1, type: type || 'tox' });
   }
 }
 
@@ -408,13 +464,25 @@ function stepGas(w) {
     p.x += p.vx + wvx; p.y += p.vy + wvy;
     p.vx = p.vx * 0.98 + gauss(w.rand) * 0.05;
     p.vy = p.vy * 0.98 + gauss(w.rand) * 0.05;
-    p.amt *= p.type === 'tox' ? 0.9985 : 0.996;
-    if (p.type === 'tox' && (i + w.tick) % 4 === 0) { // poison bites everyone inside
-      queryCritters(w, p.x, p.y, 55, (c) => {
-        if ((c.x - p.x) ** 2 + (c.y - p.y) ** 2 < 55 * 55) c.e -= p.amt * 0.6;
+    const gd = GASES[p.type] || GASES.smoke;
+    p.amt *= gd.dmg || gd.lure ? 0.9985 : 0.996;
+    if ((i + w.tick) % 4 === 0) {
+      if (gd.dmg) queryCritters(w, p.x, p.y, 55, (c) => { // poison bites everyone inside
+        if ((c.x - p.x) ** 2 + (c.y - p.y) ** 2 < 55 * 55) c.e -= p.amt * gd.dmg;
+      });
+      if (gd.lure) queryCritters(w, p.x, p.y, 130, (c) => { // pheromone — an irresistible smell
+        turnToward(c, Math.atan2(p.y - c.y, p.x - c.x), 0.25);
+      });
+      if (gd.confuse) queryCritters(w, p.x, p.y, 60, (c) => {
+        if ((c.x - p.x) ** 2 + (c.y - p.y) ** 2 < 60 * 60) c.dir += (w.rand() - 0.5) * 1.6;
       });
     }
-    if (p.amt > 0.06 &&
+    const alive = p.amt > 0.06;
+    if (!alive && gd.seed && w.rand() < 0.6) { // spores settle into sprouts
+      const [ch2, k2] = cellOf(w, p.x, p.y);
+      if ((MATS[ch2.terrain[k2]] || MATS[0]).grow) addPlant(w, ch2, p.x, p.y);
+    }
+    if (alive &&
         Math.abs(p.x - w.view.x) < CFG.ACT * 1.5 && Math.abs(p.y - w.view.y) < CFG.ACT * 1.5) g[k++] = p;
   }
   g.length = k;
@@ -506,11 +574,15 @@ function decide(w, c) {
     if (d2 < CFG.BLOOD_R * CFG.BLOOD_R) c.bb += a.p * 0.2 * (1 - Math.sqrt(d2) / CFG.BLOOD_R);
   }
   if (c.bb > 1) c.bb = 1;
-  let rad = 0;
-  if (terrAt(w, c.x, c.y) === 8) rad = 2;
-  else if (terrAt(w, c.x + 22, c.y) === 8 || terrAt(w, c.x - 22, c.y) === 8 ||
-           terrAt(w, c.x, c.y + 22) === 8 || terrAt(w, c.x, c.y - 22) === 8) rad = 1;
+  const hd = matAt(w, c.x, c.y);
+  let rad = (hd.rad || 0) * 2;
+  if (!rad) {
+    rad = Math.max(
+      (matAt(w, c.x + 22, c.y).rad || 0), (matAt(w, c.x - 22, c.y).rad || 0),
+      (matAt(w, c.x, c.y + 22).rad || 0), (matAt(w, c.x, c.y - 22).rad || 0));
+  }
   c.rad = rad;
+  c.tmut = hd.mut || 0;
 
   // threats first — only ones I can actually SEE, big enough to beat my spikes
   let threat = null, td = Infinity;
@@ -647,7 +719,7 @@ function killCritter(w, c, becomeCorpse) {
     }
   }
   if (!becomeCorpse) return null;
-  if (terrAt(w, c.x, c.y) === 7) { // the bloodstone drinks — no corpse, only power
+  if (matAt(w, c.x, c.y).sac) { // the bloodstone drinks — no corpse, only power
     w.blood.push({ x: c.x, y: c.y, p: Math.min(3, c.r / 5), t0: w.tick });
     if (w.blood.length > 40) w.blood.shift();
     w.sacrifices++;
@@ -705,21 +777,17 @@ function stepCritter(w, c) {
 
   if ((c.id + w.tick) % CFG.DECIDE_EVERY === 0) decide(w, c);
 
-  // medium decides your speed: legs on land, tail in water, mud slows, ice speeds, goo traps
-  const tHere = terrAt(w, c.x, c.y);
-  if (tHere === 10) { // lava painted under you — cremated, only smoke remains
-    emitGas(w, c.x, c.y, 'smoke', 0.9);
-    ach(w, 'cooked', 'something touched lava');
+  // the material under you decides everything: speed, grip, warmth, whether you live
+  const md = matAt(w, c.x, c.y);
+  if (md.kill) {
+    if (md.silent) ach(w, 'void', 'the void ate something');
+    else { emitGas(w, c.x, c.y, 'smoke', 0.9); ach(w, 'cooked', 'something touched lava'); }
     killCritter(w, c, false);
     return;
   }
-  const vCap = tHere === 2 ? (c.swimV || c.landV * 0.35)
-    : tHere === 5 ? c.landV * 0.55
-    : tHere === 9 ? c.landV * 1.35
-    : tHere === 12 ? c.landV * 0.22
-    : c.landV;
-  const tc = c.turnCap * (tHere === 9 ? 0.3 : 1); // ice is slippery — wide skids
-  if (tHere === 2 && c.swimV > 0 && !c.swam) { c.swam = true; ach(w, 'swim', 'Landfall in reverse — something swam'); }
+  const vCap = (md.swim ? (c.swimV || c.landV * 0.35) : c.landV) * (md.speed || 1);
+  const tc = c.turnCap * (md.turn || 1); // ice is slippery — wide skids
+  if (md.swim && c.swimV > 0 && !c.swam) { c.swam = true; ach(w, 'swim', 'Landfall in reverse — something swam'); }
 
   // steer
   let v = vCap * 0.55;
@@ -788,11 +856,11 @@ function stepCritter(w, c) {
     else c.dir += Math.PI * (0.5 + w.rand());
   }
 
-  // burn, bask, age — radiation cooks, cold bites, salt stings, blood auras feed their cult
-  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r + (c.rad || 0) * 0.22 +
-    (tHere === 9 ? 0.06 : tHere === 11 ? 0.05 : 0);
-  if (c.bb) c.e = Math.min(c.maxE, c.e + c.bb * 0.03); // blessing is about breeding, not free food
-  if (g.pho > 0.05) c.e = Math.min(c.maxE, c.e + g.pho * c.r * c.r * 0.001 * (v < 0.2 ? 1 : 0.35));
+  // burn, bask, age — radiation cooks, materials drain (or heal), blood auras feed their cult
+  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r + (c.rad || 0) * 0.22 + (md.drain || 0);
+  if (c.bb) c.e += c.bb * 0.03; // blessing is about breeding, not free food
+  if (g.pho > 0.05) c.e += g.pho * c.r * c.r * 0.001 * (v < 0.2 ? 1 : 0.35);
+  if (c.e > c.maxE) c.e = c.maxE;
   c.age++;
   if (c.e <= 0 || c.age > c.maxAge) {
     if (c.age > c.maxAge && c.age > 6800) ach(w, 'elder', 'Died of old age, properly old');
@@ -861,12 +929,12 @@ function paint(w, kind, x, y, rad) {
       if (Math.hypot(gx - ccx, gy - ccy) > cr) continue;
       const wx = gx * CFG.CS + 10, wy = gy * CFG.CS + 10;
       const [ch, k] = cellOf(w, wx, wy);
-      const T_OF = { wall: 1, water: 2, blood: 7, uran: 8, ice: 9, lava: 10, salt: 11, goo: 12 };
-      if (T_OF[kind] !== undefined) ch.terrain[k] = T_OF[kind];
+      const mid = typeof kind === 'number' ? kind : ({ wall: 1, water: 2 })[kind];
+      if (mid !== undefined) ch.terrain[k] = mid;
       else if (kind === 'erase') { if (ch.terrain[k] !== 0) ch.terrain[k] = 0; }
       else if (kind === 'fert+') ch.fert[k] = Math.min(1.3, ch.fert[k] + 0.06);
       else if (kind === 'fert-') ch.fert[k] = Math.max(0, ch.fert[k] - 0.06);
-      if (T_OF[kind] !== undefined) {
+      if (mid !== undefined && !(MATS[mid] || MATS[0]).grow) {
         for (let i = ch.plants.length - 1; i >= 0; i--) {
           const p = ch.plants[i];
           if (Math.floor(p.x / CFG.CS) === gx && Math.floor(p.y / CFG.CS) === gy) removePlant(w, ch, i);
@@ -875,7 +943,7 @@ function paint(w, kind, x, y, rad) {
       w.dirty.add(chunkKey(ch.cx, ch.cy));
     }
   }
-  if (kind === 'water') { // shores go green
+  if (kind === 'water' || kind === 2) { // shores go green
     for (let gy = ccy - cr - 4; gy <= ccy + cr + 4; gy++) for (let gx = ccx - cr - 4; gx <= ccx + cr + 4; gx++) {
       const d = Math.hypot(gx - ccx, gy - ccy);
       if (d <= cr || d > cr + 4) continue;
@@ -903,5 +971,5 @@ function aliveSpecies(w) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { CFG, makeWorld, step, paint, paintGas, findCritterAt, aliveSpecies, geneDist, terrAt, getChunk };
+  module.exports = { CFG, MATS, GASES, makeWorld, step, paint, paintGas, findCritterAt, aliveSpecies, geneDist, terrAt, getChunk };
 }
