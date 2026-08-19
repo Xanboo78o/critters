@@ -24,6 +24,8 @@ const CFG = {
   NEST_R: 30,             // nest mound radius
   NEST_ADOPT: 1400,       // social critters join a same-species nest within this range
   NEST_LEASH: 340,        // guards patrol this far out
+  BLOOD_R: 260,           // blood aura radius per sacrifice
+  BLOOD_LIFE: 2400,       // ticks an aura lasts
 };
 
 // ---------- rng + noise ----------
@@ -72,22 +74,28 @@ const FORM_GENES = ['seg','spik','legs','tail','eyes','pat'];
 const GENES = [...FUNC_GENES, 'hue', ...FORM_GENES];
 function gauss(r) { return r() + r() + r() - 1.5; } // ~N(0, 0.5)
 
-function mutate(w, g) {
+function mutate(w, g, scale) {
+  const s = Math.min(5, scale || 1); // blood auras and radiation crank this up
   const r = w.rand, m = { ...g };
   for (const k of GENES) {
-    m[k] += gauss(r) * CFG.MUT * 2;
-    if (r() < CFG.MUT_BIG) m[k] += gauss(r) * CFG.MUT_BIG_S * 2;
+    m[k] += gauss(r) * CFG.MUT * 2 * s;
+    if (r() < CFG.MUT_BIG * s) m[k] += gauss(r) * CFG.MUT_BIG_S * 2;
     if (k === 'hue') { m[k] = ((m[k] % 1) + 1) % 1; }
     else m[k] = Math.min(1, Math.max(0, m[k]));
   }
   return m;
 }
 
-function mixGenes(w, a, b) {
+function mixGenes(w, a, b, scale) {
   const r = w.rand, g = {};
   for (const k of GENES) g[k] = r() < 0.5 ? a[k] : b[k];
-  return mutate(w, g);
+  return mutate(w, g, scale);
 }
+
+// how hard this critter's children mutate right now
+function mutScale(c) { return (1 + (c.bb || 0) * 1.2) * (1 + (c.rad || 0) * 2.5); }
+// blood auras let you breed at lower energy
+function reproAt(c) { return CFG.REPRO_AT * (1 - 0.25 * Math.min(1, c.bb || 0)); }
 
 function hueDist(a, b) { const d = Math.abs(a - b); return Math.min(d, 1 - d); }
 function geneDist(a, b) {
@@ -106,6 +114,7 @@ function makeWorld(seed) {
     chunks: new Map(),
     plantCount: 0,          // active-ish running count (plants live in chunks)
     critters: [], corpses: [], nests: [],
+    blood: [], sacrifices: 0,
     species: new Map(), spNext: 1, nestNext: 1,
     nextId: 1, events: [], dirty: new Set(),
     hash: new Map(), activeN: 0,
@@ -185,7 +194,8 @@ function passableFor(w, c, x, y) {
   return true;
 }
 
-function openGround(w, x, y) { const t = terrAt(w, x, y); return t === 0 || t === 5 || t === 6; }
+// terrain 7 = bloodstone (deaths on it are sacrifices) · 8 = uranium (radiation)
+function openGround(w, x, y) { const t = terrAt(w, x, y); return t === 0 || t === 5 || t === 6 || t === 7; }
 
 function findSpawn(w) {
   for (let rad = 0; rad < 40; rad++) {
@@ -443,6 +453,19 @@ function decide(w, c) {
   const nest = nestOf(w, c);
   if (c.nestId && !nest) { c.nestId = 0; c.role = null; } // nest died
 
+  // blood auras (breed sooner, mutate hotter) + radiation (burn now, mutate hard)
+  c.bb = 0;
+  for (const a of w.blood) {
+    const d2 = (a.x - c.x) ** 2 + (a.y - c.y) ** 2;
+    if (d2 < CFG.BLOOD_R * CFG.BLOOD_R) c.bb += a.p * 0.2 * (1 - Math.sqrt(d2) / CFG.BLOOD_R);
+  }
+  if (c.bb > 1) c.bb = 1;
+  let rad = 0;
+  if (terrAt(w, c.x, c.y) === 8) rad = 2;
+  else if (terrAt(w, c.x + 22, c.y) === 8 || terrAt(w, c.x - 22, c.y) === 8 ||
+           terrAt(w, c.x, c.y + 22) === 8 || terrAt(w, c.x, c.y - 22) === 8) rad = 1;
+  c.rad = rad;
+
   // threats first — only ones I can actually SEE, big enough to beat my spikes
   let threat = null, td = Infinity;
   queryCritters(w, c.x, c.y, c.senEff, (o) => {
@@ -489,7 +512,7 @@ function decide(w, c) {
     }
   }
 
-  const ready = c.e > c.maxE * CFG.REPRO_AT && c.age > CFG.MATURITY;
+  const ready = c.e > c.maxE * reproAt(c) && c.age > CFG.MATURITY;
 
   // social critters without a nest look for one, or found their own
   if (g.soc > 0.6 && !c.nestId) {
@@ -508,7 +531,7 @@ function decide(w, c) {
     let mate = null, md = Infinity;
     queryCritters(w, c.x, c.y, c.senEff, (o) => {
       if (o === c || o.dead || o.hideT > 0 || o.sp !== c.sp || o.g.rep < 0.5 || o.nestId) return;
-      if (o.e > o.maxE * CFG.REPRO_AT && o.age > CFG.MATURITY && canSee(c, o.x, o.y)) {
+      if (o.e > o.maxE * reproAt(o) && o.age > CFG.MATURITY && canSee(c, o.x, o.y)) {
         const d = (o.x - c.x) ** 2 + (o.y - c.y) ** 2;
         if (d < md) { md = d; mate = o; }
       }
@@ -577,11 +600,22 @@ function killCritter(w, c, becomeCorpse) {
       }
     }
   }
-  if (becomeCorpse) makeCorpse(w, c);
+  if (!becomeCorpse) return null;
+  if (terrAt(w, c.x, c.y) === 7) { // the bloodstone drinks — no corpse, only power
+    w.blood.push({ x: c.x, y: c.y, p: Math.min(3, c.r / 5), t0: w.tick });
+    if (w.blood.length > 40) w.blood.shift();
+    w.sacrifices++;
+    ach(w, 'sacrifice', 'the stone drank a life');
+    if (w.sacrifices >= 25) ach(w, 'cult', '25 sacrifices accepted');
+    return null;
+  }
+  makeCorpse(w, c);
+  return w.corpses[w.corpses.length - 1];
 }
 
 function breedSplit(w, c) {
-  const g = mutate(w, c.g);
+  const g = mutate(w, c.g, mutScale(c));
+  if (c.rad) ach(w, 'hotblood', 'a child was born in the glow');
   const sp = assignSpecies(w, g, c.sp);
   const a = c.e;
   c.e = a * 0.42;
@@ -590,7 +624,8 @@ function breedSplit(w, c) {
 }
 
 function breedMate(w, c, m) {
-  const g = mixGenes(w, c.g, m.g);
+  const g = mixGenes(w, c.g, m.g, Math.max(mutScale(c), mutScale(m)));
+  if (c.rad || m.rad) ach(w, 'hotblood', 'a child was born in the glow');
   const sp = assignSpecies(w, g, c.sp);
   const pot = (c.e + m.e) * 0.3; // two providers = well-fed kids, the mater's edge
   c.e *= 0.75; m.e *= 0.75;
@@ -602,7 +637,8 @@ function queenBreed(w, q, n) {
   const cost = q.maxE * 0.55 * (1 - 0.07 * Math.min(4, n.nurses)); // nurses make brood cheaper
   if (n.store < cost || !canBreedHere(w, q)) return;
   n.store -= cost;
-  const g = mutate(w, q.g);
+  const g = mutate(w, q.g, mutScale(q));
+  if (q.rad) ach(w, 'hotblood', 'a child was born in the glow');
   const sp = assignSpecies(w, g, q.sp);
   const child = spawnCritter(w, n.x + gauss(w.rand) * 14, n.y + gauss(w.rand) * 14, g, sp, cost * 0.8);
   if (sp === n.sp && n.members < 44) joinNest(w, child, n); // gene-drifted kids are outcasts
@@ -661,13 +697,13 @@ function stepCritter(w, c) {
         v = 0;
       } else if (c.target.t === 'prey') {
         c.e -= o.g.spik * o.r * 3; // spiky prey wounds its killer
-        killCritter(w, o, true);
+        const corpse = killCritter(w, o, true); // null if the bloodstone stole the kill
         c.kills++;
         if (c.kills >= 10) ach(w, 'apex', 'Apex — one critter made 10 kills');
         ach(w, 'firstblood', 'First blood');
-        c.target = { t: 'corpse', o: w.corpses[w.corpses.length - 1] };
+        c.target = corpse ? { t: 'corpse', o: corpse } : null;
       } else if (c.target.t === 'mate') {
-        if (o.e > o.maxE * CFG.REPRO_AT && c.e > c.maxE * CFG.REPRO_AT &&
+        if (o.e > o.maxE * reproAt(o) && c.e > c.maxE * reproAt(c) &&
             canBreedHere(w, c)) breedMate(w, c, o);
         else { c.target = null; c.mode = 'wander'; }
       } else if (c.target.t === 'nest') {
@@ -695,8 +731,9 @@ function stepCritter(w, c) {
     else c.dir += Math.PI * (0.5 + w.rand());
   }
 
-  // burn, bask, age
-  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r;
+  // burn, bask, age — radiation cooks, blood auras feed their cult
+  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r + (c.rad || 0) * 0.22;
+  if (c.bb) c.e = Math.min(c.maxE, c.e + c.bb * 0.03); // blessing is about breeding, not free food
   if (g.pho > 0.05) c.e = Math.min(c.maxE, c.e + g.pho * c.r * c.r * 0.001 * (v < 0.2 ? 1 : 0.35));
   c.age++;
   if (c.e <= 0 || c.age > c.maxAge) {
@@ -714,7 +751,7 @@ function stepCritter(w, c) {
     }
     return;
   }
-  if (g.rep < 0.5 && !c.nestId && c.e > c.maxE * CFG.REPRO_AT && c.age > CFG.MATURITY &&
+  if (g.rep < 0.5 && !c.nestId && c.e > c.maxE * reproAt(c) && c.age > CFG.MATURITY &&
       canBreedHere(w, c)) breedSplit(w, c);
 }
 
@@ -748,6 +785,8 @@ function step(w) {
   }
   cp.length = k;
   if (w.tick % 40 === 0) w.nests = w.nests.filter((n) => !n.dead);
+  if (w.tick % 20 === 0 && w.blood.length)
+    w.blood = w.blood.filter((a) => w.tick - a.t0 < CFG.BLOOD_LIFE);
 }
 
 // ---------- god tools ----------
@@ -762,10 +801,12 @@ function paint(w, kind, x, y, rad) {
       const [ch, k] = cellOf(w, wx, wy);
       if (kind === 'wall') ch.terrain[k] = 1;
       else if (kind === 'water') { ch.terrain[k] = 2; }
+      else if (kind === 'blood') ch.terrain[k] = 7;
+      else if (kind === 'uran') ch.terrain[k] = 8;
       else if (kind === 'erase') { if (ch.terrain[k] !== 0) ch.terrain[k] = 0; }
       else if (kind === 'fert+') ch.fert[k] = Math.min(1.3, ch.fert[k] + 0.06);
       else if (kind === 'fert-') ch.fert[k] = Math.max(0, ch.fert[k] - 0.06);
-      if (kind === 'wall' || kind === 'water') {
+      if (kind === 'wall' || kind === 'water' || kind === 'blood' || kind === 'uran') {
         for (let i = ch.plants.length - 1; i >= 0; i--) {
           const p = ch.plants[i];
           if (Math.floor(p.x / CFG.CS) === gx && Math.floor(p.y / CFG.CS) === gy) removePlant(w, ch, i);

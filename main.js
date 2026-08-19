@@ -27,6 +27,9 @@ const ACH_DEFS = [
   ['elder', 'Elder', 'died of proper old age'],
   ['apex', 'Apex', 'one critter made 10 kills'],
   ['boom', 'Boom', '2000 alive at once'],
+  ['sacrifice', 'First Sacrifice', 'the bloodstone drank a life'],
+  ['cult', 'Cult Following', '25 sacrifices accepted'],
+  ['hotblood', 'Children of the Atom', 'a child born mutated by radiation'],
   ['farlands', 'The Farlands', 'you found where the world breaks'],
   ['painter', 'Terraformer', 'you reshaped the land'],
   ['inspector', 'Field Biologist', 'inspected 15 different critters'],
@@ -79,6 +82,8 @@ const T_COLORS = {
   4: [126, 116, 104],  // rock
   5: [151, 130, 99],   // mud
   6: [168, 196, 122],  // glowmoss (farlands)
+  7: [124, 66, 62],    // bloodstone
+  8: [172, 172, 92],   // uranium
 };
 function chunkCanvas(cx, cy) {
   const key = cx + ',' + cy;
@@ -93,8 +98,13 @@ function chunkCanvas(cx, cy) {
   for (let i = 0; i < CFG.CH * CFG.CH; i++) {
     const t = ch.terrain[i];
     let r, g, b;
-    if (t !== 0) { [r, g, b] = T_COLORS[t]; }
-    else {
+    if (t !== 0) {
+      [r, g, b] = T_COLORS[t];
+      if (t === 7 || t === 8) { // mineral speckle
+        const v = ((Math.imul(i + 7, 2654435761) >>> 8) % 26) - 13;
+        r += v; g += v; b += v;
+      }
+    } else {
       const f = Math.min(1, ch.fert[i]) * 0.55;
       r = 217 + (148 - 217) * f;
       g = 203 + (176 - 203) * f;
@@ -359,6 +369,19 @@ function draw() {
     for (const p of chk.plants) ctx.fillRect(ox + p.x * z - ps / 2, oy + p.y * z - ps / 2, ps, ps);
   }
 
+  // blood auras — the stone's power, pulsing
+  for (const a of world.blood) {
+    if (a.x < vx0 - 260 || a.x > vx1 + 260 || a.y < vy0 - 260 || a.y > vy1 + 260) continue;
+    const life = 1 - (world.tick - a.t0) / CFG.BLOOD_LIFE;
+    const pulse = 0.75 + 0.25 * Math.sin(world.tick * 0.08 + a.t0);
+    ctx.globalAlpha = 0.16 * life * pulse;
+    ctx.fillStyle = '#7c3e3a';
+    ctx.beginPath();
+    ctx.arc(ox + a.x * z, oy + a.y * z, CFG.BLOOD_R * z * pulse, 0, 7);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
   // nests
   for (const n of world.nests) {
     if (n.dead || n.x < vx0 || n.x > vx1 || n.y < vy0 || n.y > vy1) continue;
@@ -472,10 +495,11 @@ function updatePanel() {
   if (g.bur > 0.12) rows += barRow('burrow', g.bur, '#a08d5f', g.bur > 0.45 ? 'digger' : '');
   if (g.pho > 0.12) rows += barRow('photo', g.pho, '#7f9a56', g.pho > 0.35 ? 'basks' : '');
   if (g.soc > 0.12) rows += barRow('social', g.soc, '#c9a94f', c.nestId ? 'in a nest' : '');
+  const state = (c.rad ? ' · ☢ irradiated' : '') + (c.bb > 0.15 ? ' · 🩸 blessed' : '');
   panel.innerHTML =
     `<h2 style="color:hsl(${h} 65% 68%)">${s ? s.name : '?'}</h2>` +
     `<div class="sub">${life} · ${s ? s.count : '?'} alive · ` +
-    `${c.swimV > 0 ? (g.legs < 0.1 ? 'swimmer' : 'amphibious') : 'land only'}</div>` + rows;
+    `${c.swimV > 0 ? (g.legs < 0.1 ? 'swimmer' : 'amphibious') : 'land only'}${state}</div>` + rows;
 }
 
 // ---------- stats ----------
@@ -553,7 +577,7 @@ addEventListener('keydown', (e) => {
     if (speed === 0) setSpeed(prevSpeed || 1);
     else { prevSpeed = speed; setSpeed(0); }
   }
-  const tools = { Digit1: 'look', Digit2: 'wall', Digit3: 'water', Digit4: 'fert+', Digit5: 'fert-', Digit6: 'erase' };
+  const tools = { Digit1: 'look', Digit2: 'wall', Digit3: 'water', Digit4: 'fert+', Digit5: 'fert-', Digit6: 'blood', Digit7: 'uran', Digit8: 'erase' };
   if (tools[e.code]) setTool(tools[e.code]);
 });
 
