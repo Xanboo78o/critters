@@ -27,6 +27,14 @@
   .bar-row .lbl { display:flex; justify-content:space-between; font-size:11px; opacity:.85; }
   .bar-row .tr { height:7px; border-radius:4px; background:#00000038; overflow:hidden; margin-top:2px; }
   .bar-row .fl { height:100%; border-radius:4px; }
+  .toast.gold { background:#5a4c2ae6; box-shadow:0 0 12px #c9a94f55; }
+  #achievements { position:fixed; top:60px; right:10px; width:240px; max-height:70vh; overflow-y:auto;
+    background:#4a4032ee; color:#efe6cf; border-radius:14px; padding:12px 14px; font-size:13px; display:none; }
+  #achievements h2 { margin:0 0 8px; font-size:16px; }
+  .ach { padding:6px 8px; border-radius:8px; margin:4px 0; background:#00000026; opacity:.45; }
+  .ach.got { opacity:1; background:#5a4c2a66; }
+  .ach b { display:block; font-size:13px; }
+  .ach span { font-size:11px; opacity:.8; }
 </style>
 </head>
 <body>
@@ -44,7 +52,9 @@
   <button data-spd="1" class="on">▶</button>
   <button data-spd="4" title="4x">▶▶</button>
   <button data-spd="16" title="16x">▶▶▶</button>
+  <button id="achBtn" title="achievements">🏆</button>
 </div>
+<div id="achievements"></div>
 <div id="stats"></div>
 <div id="hint">drag to look · scroll to zoom · click a critter</div>
 <div id="toasts"></div>
