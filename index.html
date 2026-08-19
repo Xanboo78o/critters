@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>critters</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+  html,body { margin:0; height:100%; overflow:hidden; background:#b3a180; font-family: system-ui, sans-serif; }
+  #cv { position:fixed; inset:0; display:block; }
+  .bar { position:fixed; display:flex; gap:6px; padding:6px 8px; background:#4a4032e6; border-radius:14px; box-shadow:0 2px 10px #00000030; }
+  #tools { top:10px; left:50%; transform:translateX(-50%); }
+  #speed { top:10px; right:10px; }
+  .bar button { border:0; border-radius:9px; background:#5d5140; color:#efe6cf; font-size:17px; width:38px; height:38px; cursor:pointer; }
+  .bar button.on { background:#8a9a56; }
+  .bar button:hover { background:#6d5f4a; }
+  .bar button.on:hover { background:#93a55e; }
+  #stats { position:fixed; left:12px; bottom:10px; color:#efe6cf; background:#4a4032cc; padding:6px 12px; border-radius:10px; font-size:13px; }
+  #hint { position:fixed; right:12px; bottom:10px; color:#efe6cfaa; font-size:12px; text-shadow:0 1px 2px #00000040; }
+  #toasts { position:fixed; bottom:52px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; pointer-events:none; }
+  .toast { background:#4a4032e6; color:#efe6cf; padding:7px 14px; border-radius:10px; font-size:13px; display:flex; gap:8px; align-items:center; animation:pop .18s ease-out; }
+  .toast .chip { width:12px; height:12px; border-radius:50%; flex:none; }
+  @keyframes pop { from { transform:scale(.8); opacity:0 } }
+  #panel { position:fixed; top:60px; right:10px; width:212px; background:#4a4032ee; color:#efe6cf; border-radius:14px; padding:12px 14px; font-size:13px; display:none; }
+  #panel h2 { margin:0 0 2px; font-size:19px; }
+  #panel .sub { opacity:.75; font-size:12px; margin-bottom:8px; }
+  .bar-row { margin:5px 0; }
+  .bar-row .lbl { display:flex; justify-content:space-between; font-size:11px; opacity:.85; }
+  .bar-row .tr { height:7px; border-radius:4px; background:#00000038; overflow:hidden; margin-top:2px; }
+  .bar-row .fl { height:100%; border-radius:4px; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="tools" class="bar">
+  <button data-tool="look" class="on" title="look / inspect (1)">👁</button>
+  <button data-tool="wall" title="wall (2)">🧱</button>
+  <button data-tool="water" title="water (3)">💧</button>
+  <button data-tool="fert+" title="fertile soil — food grows (4)">🌿</button>
+  <button data-tool="fert-" title="famine — soil dies (5)">🏜️</button>
+  <button data-tool="erase" title="erase terrain (6)">🧽</button>
+</div>
+<div id="speed" class="bar">
+  <button data-spd="0" title="pause (space)">⏸</button>
+  <button data-spd="1" class="on">▶</button>
+  <button data-spd="4" title="4x">▶▶</button>
+  <button data-spd="16" title="16x">▶▶▶</button>
+</div>
+<div id="stats"></div>
+<div id="hint">drag to look · scroll to zoom · click a critter</div>
+<div id="toasts"></div>
+<div id="panel"></div>
+<script src="sim.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
