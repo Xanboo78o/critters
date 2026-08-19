@@ -24,6 +24,8 @@ const cam = { x: CFG.W / 2, y: CFG.H / 2, z: 0.7 };
   let sx = 0, sy = 0, n = Math.min(40, world.critters.length);
   for (let i = 0; i < n; i++) { sx += world.critters[i].x; sy += world.critters[i].y; }
   if (n) { cam.x = sx / n; cam.y = sy / n; }
+  const zq = new URLSearchParams(location.search).get('z');
+  if (zq) cam.z = +zq;
   const hw = innerWidth / 2 / cam.z, hh = innerHeight / 2 / cam.z;
   cam.x = Math.min(CFG.W - hw, Math.max(hw, cam.x));
   cam.y = Math.min(CFG.H - hh, Math.max(hh, cam.y));
@@ -64,36 +66,96 @@ redrawTerrain();
 // ---------- drawing ----------
 function drawCritter(c, ox, oy, z) {
   const sx = ox + c.x * z, sy = oy + c.y * z, r = c.r * z;
-  const h = (c.g.hue * 360) | 0;
-  if (r < 2.2) {
-    ctx.fillStyle = `hsl(${h} 60% 50%)`;
+  const g = c.g, h = (g.hue * 360) | 0;
+  if (r < 2.4) {
+    ctx.fillStyle = `hsl(${h} 38% 48%)`;
     ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
     return;
   }
-  const fill = `hsl(${h} 58% 53%)`;
-  const line = `hsl(${h} 58% 41%)`; // outline = darker shade of the fill, never black
+  const fill = `hsl(${h} 38% 51%)`;
+  const line = `hsl(${h} 40% 39%)`; // outline = darker shade of the fill, never black
+  const dx = Math.cos(c.dir), dy = Math.sin(c.dir);
+  const px = -dy, py = dx;
+  const rx = r * (1 + g.spd * 0.4);  // fast = sleek
+  const ry = r * (1 - g.spd * 0.18);
+  const ph = c.id * 1.7 + world.tick * 0.22;
   ctx.fillStyle = fill;
   ctx.strokeStyle = line;
   ctx.lineWidth = Math.max(1, r * 0.16);
-  const dx = Math.cos(c.dir), dy = Math.sin(c.dir);
-  if (c.g.diet > 0.55) { // hunter snout
+
+  // tail — longer on fast critters, swishes as they go
+  const tl = r * (0.5 + g.spd * 1.3);
+  const tw = Math.sin(ph) * r * 0.35;
+  ctx.beginPath();
+  ctx.moveTo(sx - dx * rx * 0.8, sy - dy * rx * 0.8);
+  ctx.quadraticCurveTo(
+    sx - dx * (rx + tl * 0.5), sy - dy * (rx + tl * 0.5),
+    sx - dx * (rx + tl) + px * tw, sy - dy * (rx + tl) + py * tw);
+  ctx.stroke();
+
+  // legs — stubby paddlers, extra pair on fast critters
+  if (r > 4) {
+    const pairs = g.spd > 0.55 ? 3 : 2;
+    const ll = r * (0.35 + g.spd * 0.3);
+    ctx.lineWidth = Math.max(1, r * 0.14);
+    for (let i = 0; i < pairs; i++) {
+      const along = (i / (pairs - 1) - 0.5) * rx * 1.05;
+      const swing = Math.sin(ph + i * 2.1) * 0.55;
+      for (const s of [1, -1]) {
+        const ax = sx + dx * along + px * s * ry * 0.8;
+        const ay = sy + dy * along + py * s * ry * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(ax + (px * s + dx * swing) * ll, ay + (py * s + dy * swing) * ll);
+        ctx.stroke();
+      }
+    }
+    ctx.lineWidth = Math.max(1, r * 0.16);
+  }
+
+  if (g.diet > 0.55) { // hunter snout
     ctx.beginPath();
-    const px = -dy, py = dx;
-    ctx.moveTo(sx + dx * r * 1.55, sy + dy * r * 1.55);
-    ctx.lineTo(sx + dx * r * 0.4 + px * r * 0.5, sy + dy * r * 0.4 + py * r * 0.5);
-    ctx.lineTo(sx + dx * r * 0.4 - px * r * 0.5, sy + dy * r * 0.4 - py * r * 0.5);
+    ctx.moveTo(sx + dx * rx * 1.5, sy + dy * rx * 1.5);
+    ctx.lineTo(sx + dx * rx * 0.35 + px * ry * 0.5, sy + dy * rx * 0.35 + py * ry * 0.5);
+    ctx.lineTo(sx + dx * rx * 0.35 - px * ry * 0.5, sy + dy * rx * 0.35 - py * ry * 0.5);
     ctx.closePath();
     ctx.fill(); ctx.stroke();
   }
+
+  // body
   ctx.beginPath();
-  ctx.arc(sx, sy, r, 0, 7);
+  ctx.ellipse(sx, sy, rx, ry, c.dir, 0, 7);
   ctx.fill(); ctx.stroke();
-  // eyes scale with senses
-  const er = r * (0.14 + c.g.sen * 0.2);
-  ctx.fillStyle = `hsl(${h} 45% 20%)`;
-  for (const a of [-0.55, 0.55]) {
+
+  if (r > 4) {
+    if (g.rep < 0.5) { // splitter — faint division seam
+      ctx.beginPath();
+      ctx.moveTo(sx + px * ry * 0.75, sy + py * ry * 0.75);
+      ctx.lineTo(sx - px * ry * 0.75, sy - py * ry * 0.75);
+      ctx.globalAlpha = 0.4;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    } else { // mater — little antennae
+      const bx = sx + dx * rx * 0.72, by = sy + dy * rx * 0.72;
+      ctx.lineWidth = Math.max(1, r * 0.1);
+      ctx.fillStyle = line;
+      for (const s of [1, -1]) {
+        const tx = bx + (dx + px * s * 0.9) * r * 0.5;
+        const ty = by + (dy + py * s * 0.9) * r * 0.5;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+        ctx.beginPath(); ctx.arc(tx, ty, r * 0.1 + 0.8, 0, 7); ctx.fill();
+      }
+      ctx.fillStyle = fill;
+      ctx.lineWidth = Math.max(1, r * 0.16);
+    }
+  }
+
+  // eyes — bigger with better senses
+  const er = r * (0.13 + g.sen * 0.2);
+  ctx.fillStyle = `hsl(${h} 30% 21%)`;
+  for (const s of [1, -1]) {
     ctx.beginPath();
-    ctx.arc(sx + Math.cos(c.dir + a) * r * 0.55, sy + Math.sin(c.dir + a) * r * 0.55, er, 0, 7);
+    ctx.arc(sx + dx * rx * 0.5 + px * s * ry * 0.45, sy + dy * rx * 0.5 + py * s * ry * 0.45, er, 0, 7);
     ctx.fill();
   }
 }
