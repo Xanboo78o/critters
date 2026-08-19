@@ -27,6 +27,8 @@ const ACH_DEFS = [
   ['elder', 'Elder', 'died of proper old age'],
   ['apex', 'Apex', 'one critter made 10 kills'],
   ['boom', 'Boom', '2000 alive at once'],
+  ['cooked', 'Well Done', 'something touched lava'],
+  ['chemist', 'Alchemist', 'painted every single material'],
   ['sacrifice', 'First Sacrifice', 'the bloodstone drank a life'],
   ['cult', 'Cult Following', '25 sacrifices accepted'],
   ['hotblood', 'Children of the Atom', 'a child born mutated by radiation'],
@@ -84,6 +86,10 @@ const T_COLORS = {
   6: [168, 196, 122],  // glowmoss (farlands)
   7: [124, 66, 62],    // bloodstone
   8: [172, 172, 92],   // uranium
+  9: [186, 209, 211],  // ice
+  10: [186, 96, 58],   // lava
+  11: [214, 208, 190], // salt
+  12: [176, 148, 82],  // goo
 };
 function chunkCanvas(cx, cy) {
   const key = cx + ',' + cy;
@@ -100,7 +106,7 @@ function chunkCanvas(cx, cy) {
     let r, g, b;
     if (t !== 0) {
       [r, g, b] = T_COLORS[t];
-      if (t === 7 || t === 8) { // mineral speckle
+      if (t >= 7) { // mineral speckle
         const v = ((Math.imul(i + 7, 2654435761) >>> 8) % 26) - 13;
         r += v; g += v; b += v;
       }
@@ -348,8 +354,8 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const ox = cw / 2 - cam.x * z, oy = ch / 2 - cam.y * z;
 
-  // terrain chunks
-  ctx.imageSmoothingEnabled = true;
+  // terrain chunks — crisp cells, a proper grid
+  ctx.imageSmoothingEnabled = false;
   const cx0 = Math.floor((cam.x - cw / 2 / z) / CFG.CHPX), cx1 = Math.floor((cam.x + cw / 2 / z) / CFG.CHPX);
   const cy0 = Math.floor((cam.y - ch / 2 / z) / CFG.CHPX), cy1 = Math.floor((cam.y + ch / 2 / z) / CFG.CHPX);
   const cpx = CFG.CHPX * z;
@@ -359,6 +365,20 @@ function draw() {
 
   const vx0 = cam.x - cw / 2 / z - 24, vx1 = cam.x + cw / 2 / z + 24;
   const vy0 = cam.y - ch / 2 / z - 24, vy1 = cam.y + ch / 2 / z + 24;
+
+  // gridlines once you're close enough to care about cells
+  if (z >= 1.3) {
+    ctx.strokeStyle = 'rgba(80,70,50,0.13)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let gx = Math.ceil(vx0 / CFG.CS) * CFG.CS; gx <= vx1; gx += CFG.CS) {
+      ctx.moveTo(ox + gx * z, 0); ctx.lineTo(ox + gx * z, ch);
+    }
+    for (let gy = Math.ceil(vy0 / CFG.CS) * CFG.CS; gy <= vy1; gy += CFG.CS) {
+      ctx.moveTo(0, oy + gy * z); ctx.lineTo(cw, oy + gy * z);
+    }
+    ctx.stroke();
+  }
 
   // plants (from visible chunks)
   const ps = Math.max(1.4, 2.7 * z);
@@ -408,6 +428,18 @@ function draw() {
     if (c.x < vx0 || c.x > vx1 || c.y < vy0 || c.y > vy1) continue;
     drawCritter(c, ox, oy, z);
   }
+
+  // the gas layer rides above everything alive
+  const GAS_COLORS = { tox: '150,160,70', mia: '120,130,105', smoke: '110,105,95' };
+  for (const p of world.gas) {
+    if (p.x < vx0 - 60 || p.x > vx1 + 60 || p.y < vy0 - 60 || p.y > vy1 + 60) continue;
+    ctx.globalAlpha = Math.min(0.3, p.amt * 0.28);
+    ctx.fillStyle = `rgb(${GAS_COLORS[p.type] || GAS_COLORS.tox})`;
+    ctx.beginPath();
+    ctx.arc(ox + p.x * z, oy + p.y * z, (30 + (1 - p.amt) * 34) * z, 0, 7);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 
   // selection ring + field-of-view wedge
   if (selected && !selected.dead) {
@@ -512,7 +544,24 @@ function updateStats() {
 }
 
 // ---------- input ----------
-function brushR() { return tool === 'fert+' || tool === 'fert-' ? 95 : 55; }
+let brushSize = 55;
+const brushSlider = document.getElementById('brushSlider');
+brushSlider.addEventListener('input', () => { brushSize = +brushSlider.value; });
+function setBrush(v) { brushSize = Math.min(280, Math.max(20, v)); brushSlider.value = brushSize; }
+function brushR() { return brushSize; }
+
+const usedTools = new Set(JSON.parse(localStorage.getItem('crittersTools') || '[]'));
+function applyPaint(wx, wy) {
+  if (tool === 'gas') paintGas(world, wx, wy, brushR());
+  else paint(world, tool, wx, wy, brushR());
+  if (!usedTools.has(tool)) {
+    usedTools.add(tool);
+    localStorage.setItem('crittersTools', JSON.stringify([...usedTools]));
+    if (['wall','water','fert+','fert-','blood','uran','ice','lava','salt','goo','gas'].every((t) => usedTools.has(t)))
+      unlock('chemist');
+  }
+  if (++paintFrames === 400) unlock('painter');
+}
 
 cv.addEventListener('pointerdown', (e) => {
   cv.setPointerCapture(e.pointerId);
@@ -535,8 +584,15 @@ cv.addEventListener('pointermove', (e) => {
     cam.x -= (e.clientX - mouse.x) / cam.z;
     cam.y -= (e.clientY - mouse.y) / cam.z;
   }
+  const [nwx, nwy] = toWorld(e.clientX, e.clientY);
+  // paint the whole stroke, not just where the events landed
+  if (mouse.down && !mouse.panning && tool !== 'look') {
+    const d = Math.hypot(nwx - mouse.wx, nwy - mouse.wy), stepLen = brushR() * 0.5;
+    for (let s = stepLen; s < d; s += stepLen)
+      applyPaint(mouse.wx + (nwx - mouse.wx) * (s / d), mouse.wy + (nwy - mouse.wy) * (s / d));
+  }
   mouse.x = e.clientX; mouse.y = e.clientY;
-  [mouse.wx, mouse.wy] = toWorld(e.clientX, e.clientY);
+  [mouse.wx, mouse.wy] = [nwx, nwy];
 });
 
 addEventListener('pointerup', () => { mouse.down = false; mouse.panning = false; });
@@ -551,7 +607,7 @@ cv.addEventListener('wheel', (e) => {
   cam.x += wx - wx2; cam.y += wy - wy2;
 }, { passive: false });
 
-const toolBtns = document.querySelectorAll('#tools button');
+const toolBtns = document.querySelectorAll('#tools button, #tools2 button');
 function setTool(t) {
   tool = t;
   toolBtns.forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
@@ -577,17 +633,17 @@ addEventListener('keydown', (e) => {
     if (speed === 0) setSpeed(prevSpeed || 1);
     else { prevSpeed = speed; setSpeed(0); }
   }
-  const tools = { Digit1: 'look', Digit2: 'wall', Digit3: 'water', Digit4: 'fert+', Digit5: 'fert-', Digit6: 'blood', Digit7: 'uran', Digit8: 'erase' };
+  const tools = { Digit1: 'look', Digit2: 'wall', Digit3: 'water', Digit4: 'fert+', Digit5: 'fert-', Digit6: 'erase' };
   if (tools[e.code]) setTool(tools[e.code]);
+  if (e.code === 'BracketLeft') setBrush(brushSize - 15);
+  if (e.code === 'BracketRight') setBrush(brushSize + 15);
 });
 
 // ---------- loop ----------
 function frame() {
   world.view.x = cam.x; world.view.y = cam.y;
-  if (mouse.down && !mouse.panning && tool !== 'look') {
-    paint(world, tool, mouse.wx, mouse.wy, brushR());
-    if (++paintFrames === 400) unlock('painter');
-  }
+  [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y); // brush stays glued to the cursor through pans and zooms
+  if (mouse.down && !mouse.panning && tool !== 'look') applyPaint(mouse.wx, mouse.wy);
   for (let i = 0; i < speed; i++) step(world);
   if (world.dirty.size) {
     for (const key of world.dirty) chunkCanvases.delete(key);

@@ -26,6 +26,7 @@ const CFG = {
   NEST_LEASH: 340,        // guards patrol this far out
   BLOOD_R: 260,           // blood aura radius per sacrifice
   BLOOD_LIFE: 2400,       // ticks an aura lasts
+  GAS_CAP: 700,           // max gas puffs alive
 };
 
 // ---------- rng + noise ----------
@@ -115,6 +116,7 @@ function makeWorld(seed) {
     plantCount: 0,          // active-ish running count (plants live in chunks)
     critters: [], corpses: [], nests: [],
     blood: [], sacrifices: 0,
+    gas: [], wind: 0,
     species: new Map(), spNext: 1, nestNext: 1,
     nextId: 1, events: [], dirty: new Set(),
     hash: new Map(), activeN: 0,
@@ -190,11 +192,13 @@ function terrAt(w, x, y) { const [ch, k] = cellOf(w, x, y); return ch.terrain[k]
 function passableFor(w, c, x, y) {
   const t = terrAt(w, x, y);
   if (t === 1 || t === 4) return false;
+  if (t === 10) return false; // heat instinct — they won't walk into lava (paint it UNDER them...)
   if (t === 2) return c.swimV > 0;
   return true;
 }
 
-// terrain 7 = bloodstone (deaths on it are sacrifices) · 8 = uranium (radiation)
+// terrain 7 bloodstone (deaths = sacrifices) · 8 uranium (radiation) · 9 ice (fast + slippery + cold)
+// 10 lava (cremates, cools to rock) · 11 salt (sterile, stings) · 12 goo (trap)
 function openGround(w, x, y) { const t = terrAt(w, x, y); return t === 0 || t === 5 || t === 6 || t === 7; }
 
 function findSpawn(w) {
@@ -363,15 +367,57 @@ function growPlants(w, cx0, cy0, cx1, cy1) {
   const r = w.rand;
   for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
     const ch = getChunk(w, cx, cy);
-    if (ch.plants.length >= CFG.PLANT_CHUNK_CAP) continue;
     const k = (r() * CFG.CH * CFG.CH) | 0;
     const t = ch.terrain[k];
+    if (t === 10 && r() < 0.04) { // lava cools into rock
+      ch.terrain[k] = 4;
+      w.dirty.add(chunkKey(cx, cy));
+      if (r() < 0.4) emitGas(w, cx * CFG.CHPX + (k % CFG.CH) * CFG.CS, cy * CFG.CHPX + ((k / CFG.CH) | 0) * CFG.CS, 'smoke', 0.6);
+      continue;
+    }
+    if (ch.plants.length >= CFG.PLANT_CHUNK_CAP) continue;
     if (t !== 0 && t !== 6) continue;
     const f = t === 6 ? 1.3 : ch.fert[k];
     if (r() > f * 0.55) continue;
     addPlant(w, ch, cx * CFG.CHPX + (k % CFG.CH) * CFG.CS + r() * CFG.CS,
                     cy * CFG.CHPX + ((k / CFG.CH) | 0) * CFG.CS + r() * CFG.CS);
   }
+}
+
+// ---------- gases ----------
+function paintGas(w, x, y, rad) {
+  const r = w.rand;
+  for (let i = 0; i < 3; i++) {
+    if (w.gas.length >= CFG.GAS_CAP) w.gas.shift();
+    w.gas.push({ x: x + gauss(r) * rad * 0.5, y: y + gauss(r) * rad * 0.5,
+      vx: gauss(r) * 0.3, vy: gauss(r) * 0.3, amt: 1, type: 'tox' });
+  }
+}
+
+function emitGas(w, x, y, type, amt) {
+  if (w.gas.length >= CFG.GAS_CAP) w.gas.shift();
+  w.gas.push({ x, y, vx: gauss(w.rand) * 0.2, vy: gauss(w.rand) * 0.2 - 0.15, amt, type });
+}
+
+function stepGas(w) {
+  w.wind += (w.rand() - 0.5) * 0.012;
+  const wvx = Math.cos(w.wind) * 0.22, wvy = Math.sin(w.wind) * 0.22;
+  const g = w.gas; let k = 0;
+  for (let i = 0; i < g.length; i++) {
+    const p = g[i];
+    p.x += p.vx + wvx; p.y += p.vy + wvy;
+    p.vx = p.vx * 0.98 + gauss(w.rand) * 0.05;
+    p.vy = p.vy * 0.98 + gauss(w.rand) * 0.05;
+    p.amt *= p.type === 'tox' ? 0.9985 : 0.996;
+    if (p.type === 'tox' && (i + w.tick) % 4 === 0) { // poison bites everyone inside
+      queryCritters(w, p.x, p.y, 55, (c) => {
+        if ((c.x - p.x) ** 2 + (c.y - p.y) ** 2 < 55 * 55) c.e -= p.amt * 0.6;
+      });
+    }
+    if (p.amt > 0.06 &&
+        Math.abs(p.x - w.view.x) < CFG.ACT * 1.5 && Math.abs(p.y - w.view.y) < CFG.ACT * 1.5) g[k++] = p;
+  }
+  g.length = k;
 }
 
 function nearestPlant(w, c) {
@@ -659,9 +705,20 @@ function stepCritter(w, c) {
 
   if ((c.id + w.tick) % CFG.DECIDE_EVERY === 0) decide(w, c);
 
-  // medium decides your speed: legs on land, tail in water, mud slows everyone
+  // medium decides your speed: legs on land, tail in water, mud slows, ice speeds, goo traps
   const tHere = terrAt(w, c.x, c.y);
-  const vCap = tHere === 2 ? (c.swimV || c.landV * 0.35) : tHere === 5 ? c.landV * 0.55 : c.landV;
+  if (tHere === 10) { // lava painted under you — cremated, only smoke remains
+    emitGas(w, c.x, c.y, 'smoke', 0.9);
+    ach(w, 'cooked', 'something touched lava');
+    killCritter(w, c, false);
+    return;
+  }
+  const vCap = tHere === 2 ? (c.swimV || c.landV * 0.35)
+    : tHere === 5 ? c.landV * 0.55
+    : tHere === 9 ? c.landV * 1.35
+    : tHere === 12 ? c.landV * 0.22
+    : c.landV;
+  const tc = c.turnCap * (tHere === 9 ? 0.3 : 1); // ice is slippery — wide skids
   if (tHere === 2 && c.swimV > 0 && !c.swam) { c.swam = true; ach(w, 'swim', 'Landfall in reverse — something swam'); }
 
   // steer
@@ -674,13 +731,13 @@ function stepCritter(w, c) {
     v = 0;
   } else if (c.mode === 'flee' && c.target) {
     const o = c.target.o;
-    turnToward(c, Math.atan2(c.y - o.y, c.x - o.x), c.turnCap * 1.5); // panic turns
+    turnToward(c, Math.atan2(c.y - o.y, c.x - o.x), tc * 1.5); // panic turns
     v = vCap;
     if ((o.x - c.x) ** 2 + (o.y - c.y) ** 2 > c.senEff * c.senEff * 1.7) { c.target = null; c.mode = 'wander'; }
   } else if (c.target) {
     const o = c.target.o;
     const d = Math.hypot(o.x - c.x, o.y - c.y);
-    turnToward(c, Math.atan2(o.y - c.y, o.x - c.x), d < c.r * 3 ? 1 : c.turnCap);
+    turnToward(c, Math.atan2(o.y - c.y, o.x - c.x), d < c.r * 3 ? 1 : tc);
     v = vCap;
     const reach = c.r + (o.r || 3) + 2;
     if (d < reach) {
@@ -715,7 +772,7 @@ function stepCritter(w, c) {
       }
     }
   } else {
-    c.dir += (w.rand() - 0.5) * Math.min(0.7, c.turnCap * 2);
+    c.dir += (w.rand() - 0.5) * Math.min(0.7, tc * 2);
     // idle wanderers drift back toward the living world instead of freezing at its rim
     if (Math.abs(c.x - w.view.x) > CFG.ACT - 150 || Math.abs(c.y - w.view.y) > CFG.ACT - 150)
       turnToward(c, Math.atan2(w.view.y - c.y, w.view.x - c.x), c.turnCap);
@@ -731,8 +788,9 @@ function stepCritter(w, c) {
     else c.dir += Math.PI * (0.5 + w.rand());
   }
 
-  // burn, bask, age — radiation cooks, blood auras feed their cult
-  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r + (c.rad || 0) * 0.22;
+  // burn, bask, age — radiation cooks, cold bites, salt stings, blood auras feed their cult
+  c.e -= c.upkI + CFG.MOVE_UPK * v * v * c.r + (c.rad || 0) * 0.22 +
+    (tHere === 9 ? 0.06 : tHere === 11 ? 0.05 : 0);
   if (c.bb) c.e = Math.min(c.maxE, c.e + c.bb * 0.03); // blessing is about breeding, not free food
   if (g.pho > 0.05) c.e = Math.min(c.maxE, c.e + g.pho * c.r * c.r * 0.001 * (v < 0.2 ? 1 : 0.35));
   c.age++;
@@ -780,10 +838,14 @@ function step(w) {
   cs.length = j;
   const cp = w.corpses; let k = 0;
   for (let i = 0; i < cp.length; i++) {
-    if (cp[i].x >= ax0 && cp[i].x <= ax1 && cp[i].y >= ay0 && cp[i].y <= ay1) cp[i].meat -= 0.045;
+    if (cp[i].x >= ax0 && cp[i].x <= ax1 && cp[i].y >= ay0 && cp[i].y <= ay1) {
+      cp[i].meat -= 0.045;
+      if (w.rand() < 0.004) emitGas(w, cp[i].x, cp[i].y, 'mia', 0.35); // rot breathes
+    }
     if (cp[i].meat > 1) cp[k++] = cp[i];
   }
   cp.length = k;
+  stepGas(w);
   if (w.tick % 40 === 0) w.nests = w.nests.filter((n) => !n.dead);
   if (w.tick % 20 === 0 && w.blood.length)
     w.blood = w.blood.filter((a) => w.tick - a.t0 < CFG.BLOOD_LIFE);
@@ -799,14 +861,12 @@ function paint(w, kind, x, y, rad) {
       if (Math.hypot(gx - ccx, gy - ccy) > cr) continue;
       const wx = gx * CFG.CS + 10, wy = gy * CFG.CS + 10;
       const [ch, k] = cellOf(w, wx, wy);
-      if (kind === 'wall') ch.terrain[k] = 1;
-      else if (kind === 'water') { ch.terrain[k] = 2; }
-      else if (kind === 'blood') ch.terrain[k] = 7;
-      else if (kind === 'uran') ch.terrain[k] = 8;
+      const T_OF = { wall: 1, water: 2, blood: 7, uran: 8, ice: 9, lava: 10, salt: 11, goo: 12 };
+      if (T_OF[kind] !== undefined) ch.terrain[k] = T_OF[kind];
       else if (kind === 'erase') { if (ch.terrain[k] !== 0) ch.terrain[k] = 0; }
       else if (kind === 'fert+') ch.fert[k] = Math.min(1.3, ch.fert[k] + 0.06);
       else if (kind === 'fert-') ch.fert[k] = Math.max(0, ch.fert[k] - 0.06);
-      if (kind === 'wall' || kind === 'water' || kind === 'blood' || kind === 'uran') {
+      if (T_OF[kind] !== undefined) {
         for (let i = ch.plants.length - 1; i >= 0; i--) {
           const p = ch.plants[i];
           if (Math.floor(p.x / CFG.CS) === gx && Math.floor(p.y / CFG.CS) === gy) removePlant(w, ch, i);
@@ -843,5 +903,5 @@ function aliveSpecies(w) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { CFG, makeWorld, step, paint, findCritterAt, aliveSpecies, geneDist, terrAt, getChunk };
+  module.exports = { CFG, makeWorld, step, paint, paintGas, findCritterAt, aliveSpecies, geneDist, terrAt, getChunk };
 }
