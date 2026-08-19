@@ -286,19 +286,27 @@ function draw() {
     drawCritter(c, ox, oy, z);
   }
 
-  // selection ring + sense circle
+  // selection ring + field-of-view wedge (what it can actually see)
   if (selected && !selected.dead) {
     const c = selected;
+    const bx = ox + c.x * z, by = oy + c.y * z;
+    const half = (c.arc / 2) * Math.PI / 180;
+    ctx.fillStyle = '#efe6cf';
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.arc(bx, by, c.senEff * z, c.dir - half, c.dir + half);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 0.3;
     ctx.strokeStyle = '#efe6cf';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(ox + c.x * z, oy + c.y * z, c.r * z + 4, 0, 7);
-    ctx.stroke();
-    ctx.globalAlpha = 0.25;
-    ctx.beginPath();
-    ctx.arc(ox + c.x * z, oy + c.y * z, c.senR * z, 0, 7);
+    ctx.lineWidth = 1;
     ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx, by, c.r * z + 4, 0, 7);
+    ctx.stroke();
   }
 
   // brush preview
@@ -344,16 +352,20 @@ function updatePanel() {
   if (!selected || panelTimer++ % 8 !== 0) return;
   const c = selected, g = c.g, s = world.species.get(c.sp);
   const h = (g.hue * 360) | 0;
-  const dietCol = `hsl(${(110 - g.diet * 110) | 0} 55% 48%)`;
+  const dietCol = `hsl(${(110 - g.diet * 110) | 0} 45% 45%)`;
   panel.innerHTML =
     `<h2 style="color:hsl(${h} 65% 68%)">${s ? s.name : '?'}</h2>` +
-    `<div class="sub">${g.rep < 0.5 ? 'splitter' : 'mater'} · ${s ? s.count : '?'} alive</div>` +
+    `<div class="sub">${g.rep < 0.5 ? 'splitter' : 'mater'} · ${s ? s.count : '?'} alive · ` +
+    `${c.swimV > 0 ? (g.legs < 0.1 ? 'swimmer' : 'amphibious') : 'land only'}</div>` +
     barRow('energy', c.e / c.maxE, '#8a9a56') +
     barRow('age', c.age / c.maxAge, '#b8a26b') +
     barRow('size', g.siz, '#d9cba4') +
-    barRow('speed', g.spd, '#d9cba4') +
-    barRow('senses', g.sen, '#d9cba4') +
-    barRow('diet', g.diet, dietCol, g.diet < 0.35 ? '🌿' : g.diet > 0.65 ? '🍖' : '🌿+🍖');
+    barRow('speed', g.spd, '#d9cba4', g.seg < 0.33 ? 'wide turns' : g.seg > 0.66 ? 'agile' : '') +
+    barRow('vision', g.sen, '#d9cba4', `${c.arc}° · ${c.nEyes} eye${c.nEyes > 1 ? 's' : ''}`) +
+    barRow('diet', g.diet, dietCol, g.diet < 0.35 ? '🌿' : g.diet > 0.65 ? '🍖' : '🌿+🍖') +
+    barRow('spikes', g.spik, '#d9cba4', g.spik > 0.25 ? 'armored' : '') +
+    barRow('camo', g.pat, '#d9cba4', g.pat > 0.72 ? 'stripes' : g.pat > 0.4 ? 'spots' : '') +
+    barRow('legs', g.legs, '#d9cba4', c.swimV > 0 ? `swims ${g.tail > 0.5 ? 'fast' : 'slow'}` : '');
 }
 
 // ---------- stats ----------

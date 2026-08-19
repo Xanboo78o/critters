@@ -169,13 +169,52 @@ function spLose(w, id) {
 }
 
 // ---------- critters ----------
+// Every form gene MEANS something:
+//   eyes -> field of view (1 eye = narrow but far, 3 = almost all-round but short)
+//   spik -> armor: you "count as bigger" to hunters + wound whoever eats you; costs upkeep
+//   legs -> land speed; near-legless can SWIM (water is a wall to everyone else)
+//   tail -> swim power
+//   pat  -> camouflage: seen at shorter range; costs upkeep
+//   seg  -> agility: 1 blob = torpedo (fast, wide turns), 3 segments = corners tight
 function derive(c) {
   const g = c.g;
   c.r = 3 + g.siz * 11;
   c.maxE = c.r * c.r * 3;
   c.vmax = 0.4 + g.spd * 1.8;
-  c.senR = 30 + g.sen * 130;
-  c.upkI = CFG.BASE_UPK * c.r * c.r;
+  c.nEyes = g.eyes < 0.25 ? 1 : g.eyes < 0.7 ? 2 : 3;
+  c.arc = c.nEyes === 1 ? 110 : c.nEyes === 2 ? 220 : 340; // degrees of vision
+  c.cosArc = Math.cos((c.arc / 2) * Math.PI / 180);
+  c.senEff = (30 + g.sen * 130) * (c.nEyes === 1 ? 1.3 : c.nEyes === 2 ? 1 : 0.85);
+  c.senR = c.senEff;
+  const boost = 1 + (1 - g.seg) * 0.15;
+  c.landV = c.vmax * (0.55 + 0.45 * g.legs) * boost;
+  c.swimV = g.legs < 0.3 ? c.vmax * (0.25 + g.tail * 0.9) * boost : 0;
+  c.turnCap = 0.14 + g.seg * 0.4;
+  c.effR = c.r * (1 + g.spik * 0.6); // how big you look to a hunter
+  c.upkI = CFG.BASE_UPK * c.r * c.r * (1 + g.spik * 0.5 + g.pat * 0.25);
+}
+
+function canSee(c, tx, ty, mult) {
+  const ox = tx - c.x, oy = ty - c.y, d2 = ox * ox + oy * oy;
+  const R = c.senEff * (mult || 1);
+  if (d2 > R * R) return false;
+  if (d2 < 4) return true;
+  return (Math.cos(c.dir) * ox + Math.sin(c.dir) * oy) >= c.cosArc * Math.sqrt(d2);
+}
+
+function turnToward(c, want, cap) {
+  let d = want - c.dir;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  c.dir += Math.max(-cap, Math.min(cap, d));
+}
+
+function passableFor(w, c, x, y) {
+  if (x < 10 || y < 10 || x > CFG.W - 10 || y > CFG.H - 10) return false;
+  const t = w.terrain[ci(w, x, y)];
+  if (t === 1) return false;
+  if (t === 2) return c.swimV > 0;
+  return true;
 }
 
 function spawnCritter(w, x, y, g, sp, e) {
@@ -271,17 +310,18 @@ function growPlants(w) {
   }
 }
 
-function nearestPlant(w, x, y, rad) {
+function nearestPlant(w, c) {
+  const rad = c.senEff;
   const cr = Math.ceil(rad / CFG.PCS);
-  const cx = (x / CFG.PCS) | 0, cy = (y / CFG.PCS) | 0;
+  const cx = (c.x / CFG.PCS) | 0, cy = (c.y / CFG.PCS) | 0;
   let best = null, bd = rad * rad;
   for (let gy = cy - cr; gy <= cy + cr; gy++) {
     if (gy < 0 || gy >= w.PGH) continue;
     for (let gx = cx - cr; gx <= cx + cr; gx++) {
       if (gx < 0 || gx >= w.PGW) continue;
       for (const p of w.pGrid[gx + gy * w.PGW]) {
-        const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
-        if (d < bd) { bd = d; best = p; }
+        const d = (p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y);
+        if (d < bd && canSee(c, p.x, p.y)) { bd = d; best = p; }
       }
     }
   }
@@ -312,11 +352,12 @@ function queryCritters(w, x, y, rad, fn) {
 // ---------- behavior ----------
 function decide(w, c) {
   const g = c.g;
-  // threats first
-  let threat = null, td = c.senR * c.senR;
-  queryCritters(w, c.x, c.y, c.senR, (o) => {
+  // threats first — only ones I can actually SEE (their camo, my blind spots),
+  // and only hunters big enough to beat my spikes
+  let threat = null, td = Infinity;
+  queryCritters(w, c.x, c.y, c.senEff, (o) => {
     if (o === c || o.dead) return;
-    if (o.g.diet > 0.55 && o.r > c.r * 1.15) {
+    if (o.g.diet > 0.55 && o.r * 0.85 > c.effR && canSee(c, o.x, o.y, 1 - o.g.pat * 0.35)) {
       const d = (o.x - c.x) ** 2 + (o.y - c.y) ** 2;
       if (d < td) { td = d; threat = o; }
     }
@@ -327,10 +368,10 @@ function decide(w, c) {
 
   // maters go courting when full
   if (ready && g.rep >= 0.5) {
-    let mate = null, md = c.senR * c.senR;
-    queryCritters(w, c.x, c.y, c.senR, (o) => {
+    let mate = null, md = Infinity;
+    queryCritters(w, c.x, c.y, c.senEff, (o) => {
       if (o === c || o.dead || o.sp !== c.sp || o.g.rep < 0.5) return;
-      if (o.e > o.maxE * CFG.REPRO_AT && o.age > CFG.MATURITY) {
+      if (o.e > o.maxE * CFG.REPRO_AT && o.age > CFG.MATURITY && canSee(c, o.x, o.y)) {
         const d = (o.x - c.x) ** 2 + (o.y - c.y) ** 2;
         if (d < md) { md = d; mate = o; }
       }
@@ -341,7 +382,7 @@ function decide(w, c) {
   // forage — pick the best bite for MY diet
   let best = null, bs = 0;
   if (g.diet < 0.9) {
-    const p = nearestPlant(w, c.x, c.y, c.senR);
+    const p = nearestPlant(w, c);
     if (p) {
       const s = (1 - g.diet) / (Math.hypot(p.x - c.x, p.y - c.y) + 25);
       if (s > bs) { bs = s; best = { t: 'plant', o: p }; }
@@ -349,17 +390,17 @@ function decide(w, c) {
   }
   if (g.diet > 0.25) {
     for (const cp of w.corpses) {
-      const d = Math.hypot(cp.x - c.x, cp.y - c.y);
-      if (d < c.senR) {
-        const s = g.diet / (d + 25);
-        if (s > bs) { bs = s; best = { t: 'corpse', o: cp }; }
-      }
+      if (!canSee(c, cp.x, cp.y)) continue;
+      const s = g.diet / (Math.hypot(cp.x - c.x, cp.y - c.y) + 25);
+      if (s > bs) { bs = s; best = { t: 'corpse', o: cp }; }
     }
   }
   if (g.diet > 0.55 && c.e < c.maxE * 0.8) {
-    let prey = null, pd = c.senR * c.senR;
-    queryCritters(w, c.x, c.y, c.senR, (o) => {
-      if (o === c || o.dead || o.r > c.r * 0.85) return;
+    let prey = null, pd = Infinity;
+    queryCritters(w, c.x, c.y, c.senEff, (o) => {
+      // spiky prey "counts as bigger" — armor shrinks who dares eat you; camo hides you
+      if (o === c || o.dead || o.effR > c.r * 0.85) return;
+      if (!canSee(c, o.x, o.y, 1 - o.g.pat * 0.35)) return;
       const d = (o.x - c.x) ** 2 + (o.y - c.y) ** 2;
       if (d < pd) { pd = d; prey = o; }
     });
@@ -404,22 +445,26 @@ function stepCritter(w, c) {
   const g = c.g;
   if ((c.id + w.tick) % CFG.DECIDE_EVERY === 0) decide(w, c);
 
+  // medium decides your speed: legs on land, tail in water (struggle if neither)
+  const inWater = w.terrain[ci(w, c.x, c.y)] === 2;
+  const vCap = inWater ? (c.swimV || c.landV * 0.35) : c.landV;
+
   // steer
-  let v = c.vmax * 0.55;
+  let v = vCap * 0.55;
   const tg = c.target;
   if (tg && (tg.o.dead || (tg.t === 'corpse' && tg.o.meat <= 0))) {
     c.target = null; c.mode = 'wander';
   }
   if (c.mode === 'flee' && c.target) {
     const o = c.target.o;
-    c.dir = Math.atan2(c.y - o.y, c.x - o.x);
-    v = c.vmax;
-    if ((o.x - c.x) ** 2 + (o.y - c.y) ** 2 > c.senR * c.senR * 1.7) { c.target = null; c.mode = 'wander'; }
+    turnToward(c, Math.atan2(c.y - o.y, c.x - o.x), c.turnCap * 1.5); // panic turns
+    v = vCap;
+    if ((o.x - c.x) ** 2 + (o.y - c.y) ** 2 > c.senEff * c.senEff * 1.7) { c.target = null; c.mode = 'wander'; }
   } else if (c.target) {
     const o = c.target.o;
-    c.dir = Math.atan2(o.y - c.y, o.x - c.x);
-    v = c.vmax;
     const d = Math.hypot(o.x - c.x, o.y - c.y);
+    turnToward(c, Math.atan2(o.y - c.y, o.x - c.x), d < c.r * 3 ? 1 : c.turnCap);
+    v = vCap;
     const reach = c.r + (o.r || 3) + 2;
     if (d < reach) {
       if (c.target.t === 'plant') {
@@ -431,6 +476,7 @@ function stepCritter(w, c) {
         c.e = Math.min(c.maxE, c.e + bite * g.diet);
         v = 0;
       } else if (c.target.t === 'prey') {
+        c.e -= o.g.spik * o.r * 3; // spiky prey wounds its killer
         killCritter(w, o, true);
         c.target = { t: 'corpse', o: w.corpses[w.corpses.length - 1] };
       } else if (c.target.t === 'mate') {
@@ -440,16 +486,16 @@ function stepCritter(w, c) {
       }
     }
   } else {
-    c.dir += (w.rand() - 0.5) * 0.35;
+    c.dir += (w.rand() - 0.5) * Math.min(0.7, c.turnCap * 2);
   }
 
-  // move (terrain blocks; if stuck inside painted wall, wiggle free)
+  // move (walls block; water blocks non-swimmers; if stuck inside painted terrain, wiggle free)
   if (v > 0) {
     const nx = c.x + Math.cos(c.dir) * v, ny = c.y + Math.sin(c.dir) * v;
-    const free = !passable(w, c.x, c.y);
-    if (free || passable(w, nx, ny)) { c.x = Math.min(CFG.W - 10, Math.max(10, nx)); c.y = Math.min(CFG.H - 10, Math.max(10, ny)); }
-    else if (passable(w, nx, c.y)) c.x = nx;
-    else if (passable(w, c.x, ny)) c.y = ny;
+    const free = !passableFor(w, c, c.x, c.y);
+    if (free || passableFor(w, c, nx, ny)) { c.x = Math.min(CFG.W - 10, Math.max(10, nx)); c.y = Math.min(CFG.H - 10, Math.max(10, ny)); }
+    else if (passableFor(w, c, nx, c.y)) c.x = nx;
+    else if (passableFor(w, c, c.x, ny)) c.y = ny;
     else c.dir += Math.PI * (0.5 + w.rand());
   }
 
