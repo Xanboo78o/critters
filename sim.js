@@ -320,6 +320,7 @@ function stampStructures(w, cx, cy, terrain, fert) {
 function genChunk(w, cx, cy) {
   const terrain = new Uint8Array(CFG.CH * CFG.CH);
   const fert = new Float32Array(CFG.CH * CFG.CH);
+  const elevA = new Float32Array(CFG.CH * CFG.CH);
   const s = w.seed | 0;
   const far = Math.abs(cx * CFG.CHPX) > CFG.FAR || Math.abs(cy * CFG.CHPX) > CFG.FAR;
   let forestish = 0;
@@ -335,25 +336,31 @@ function genChunk(w, cx, cy) {
       else { terrain[k] = 0; fert[k] = g * 0.8; }
       continue;
     }
-    // geography, not noise-confetti: continents, mountain CHAINS, rivers that
-    // run downhill to the sea and widen, beaches on every shore, big climate zones
+    // satellite geography: drainage networks carve the land, green follows the water
     const wxp = wx + (vnoise(wx, wy, 700, s + 31) - 0.5) * 620;
     const wyp = wy + (vnoise(wx, wy, 700, s + 37) - 0.5) * 620;
-    const cont = vnoise(wx, wy, 3800, s + 51);                          // landmass
+    const cont = vnoise(wx, wy, 3800, s + 51) * 0.75 + vnoise(wx, wy, 1300, s + 52) * 0.25;
     const ridge = 1 - Math.abs(2 * vnoise(wxp, wyp, 2600, s + 53) - 1); // ranges are LINES
     const detail = vnoise(wxp, wyp, 420, s + 7) * 0.6 + vnoise(wxp, wyp, 140, s + 11) * 0.4;
-    const H = cont * 0.52 + detail * 0.22 + ridge * ridge * 0.34;
-    const T = vnoise(wx, wy, 6200, s + 17) * 0.7 + vnoise(wx, wy, 1500, s + 18) * 0.3; // climate bands
+    const T0 = vnoise(wx, wy, 6200, s + 17) * 0.7 + vnoise(wx, wy, 1500, s + 18) * 0.3; // climate bands
     const M = vnoise(wx, wy, 4200, s + 13) * 0.65 + vnoise(wx, wy, 1100, s + 14) * 0.35;
+    // nested valley systems — big rivers, tributaries, brooks — each carves less deep;
+    // where they cross they join, and that is what erosion looks like from orbit
+    const v1 = Math.abs(vnoise(wxp, wyp, 2600, s + 23) - 0.5);
+    const v2 = Math.abs(vnoise(wxp, wyp, 1050, s + 24) - 0.5);
+    const v3 = Math.abs(vnoise(wxp, wyp, 430, s + 25) - 0.5);
+    const wet = 0.45 + M * 0.8;
+    const carve = Math.max(0, 0.075 - v1) / 0.075 * 0.085 +
+                  Math.max(0, 0.045 - v2) / 0.045 * 0.045 * wet +
+                  Math.max(0, 0.028 - v3) / 0.028 * 0.022 * wet;
+    let H = cont * 0.52 + detail * 0.16 + ridge * ridge * 0.36 - carve;
+    elevA[k] = H;
+    const T = T0 - Math.max(0, H - 0.55) * 0.55; // lapse rate: altitude IS cold
     const SEA = 0.42;
-    // rivers: long meanders that only live below the highlands, widening toward the sea
-    const rv = Math.abs(vnoise(wxp, wyp, 2300, s + 23) - 0.5);
-    const rw = 0.006 + Math.max(0, 0.58 - H) * 0.022;
-    const isRiver = H >= SEA && H < 0.64 && rv < rw;
-    const nearRiver = H >= SEA && H < 0.64 && rv < rw + 0.007;
-    if (H < SEA - 0.045) { terrain[k] = 30; fert[k] = 0; continue; }    // open deep
-    if (H < SEA || isRiver) { terrain[k] = 2; fert[k] = 0; continue; }
-    if (H < SEA + 0.022 || nearRiver) {                                 // every shore gets a bank
+    const riparian = carve > 0.014;
+    if (H < SEA - 0.05) { terrain[k] = 30; fert[k] = 0; continue; }     // open deep
+    if (H < SEA) { terrain[k] = 2; fert[k] = 0; continue; }             // sea, lakes, rivers — all carved
+    if (H < SEA + 0.018) {                                              // every waterline gets a bank
       terrain[k] = T > 0.55 ? 14 : 5; fert[k] = 0.9; continue;
     }
     if (H > 0.78) {                                                     // peaks: snow, or fire
@@ -361,22 +368,29 @@ function genChunk(w, cx, cy) {
       terrain[k] = T < 0.45 ? 17 : 4; fert[k] = 0; continue;
     }
     if (H > 0.7) { terrain[k] = T < 0.3 ? 18 : T > 0.72 ? 21 : 4; fert[k] = 0; continue; } // the range itself
-    if (H > 0.65) { terrain[k] = 0; fert[k] = 0.06; continue; }         // bare foothills
-    // lowland climate zones — big and coherent
+    if (H > 0.65) { terrain[k] = 0; fert[k] = riparian ? 0.35 : 0.06; continue; } // foothills, green in the canyons
     if (T < 0.24) { terrain[k] = 17; fert[k] = 0.1; continue; }         // tundra
     if (T > 0.68 && M < 0.34) {                                         // desert belt
+      if (riparian) { terrain[k] = 0; fert[k] = 0.85; forestish++; continue; } // the green river ribbon
       terrain[k] = M < 0.15 ? 11 : 14; fert[k] = 0.07; continue;
     }
-    if (H < SEA + 0.05 && M > 0.6 && T > 0.5) {                         // wetlands hug the water
+    if (H < SEA + 0.04 && M > 0.6 && T > 0.5) {                         // wetlands hug the water
       terrain[k] = h2(wx | 0, wy | 0, s + 43) < 0.25 ? 2 : 5;
       fert[k] = 1.0; forestish++; continue;
     }
     terrain[k] = 0;
-    if (M > 0.55) { fert[k] = 0.6 + (M - 0.55) * 1.3; forestish++; }    // forest
-    else fert[k] = Math.min(1.1, Math.max(0.08, M * 0.6 + 0.12 + (H < SEA + 0.1 ? 0.2 : 0)));
+    let f = M * 0.55 + 0.1 + (riparian ? 0.45 : 0) + (H < SEA + 0.1 ? 0.12 : 0) - Math.max(0, H - 0.58) * 1.2;
+    if (M > 0.55 || (riparian && M > 0.35)) forestish++;                // forest follows the rain AND the rivers
+    fert[k] = Math.min(1.15, Math.max(0.06, f));
   }
   stampStructures(w, cx, cy, terrain, fert);
-  const ch = { cx, cy, terrain, fert, plants: [], decor: [], biome: forestish > 80 ? 'forest' : '' };
+  // hillshade: light from the northwest, like every map you have ever seen
+  const shade = new Int8Array(CFG.CH * CFG.CH);
+  for (let j = 1; j < CFG.CH; j++) for (let i = 1; i < CFG.CH; i++) {
+    const k2 = i + j * CFG.CH;
+    shade[k2] = Math.max(-24, Math.min(24, (elevA[k2 - 1 - CFG.CH] - elevA[k2]) * 620));
+  }
+  const ch = { cx, cy, terrain, fert, shade, plants: [], decor: [], biome: forestish > 80 ? 'forest' : '' };
   const r = w.rand;
   const tries = ch.biome === 'forest' ? 34 : 12; // forests arrive FULL of trees
   for (let t = 0; t < tries; t++) {

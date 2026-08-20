@@ -119,13 +119,14 @@ function chunkCanvas(cx, cy) {
   const d = img.data;
   const colAt = (i, j) => {
     const t = ch.terrain[i + j * CFG.CH];
+    const sh = ch.shade ? ch.shade[i + j * CFG.CH] : 0;
     if (t === 0) {
       const f = Math.min(1, ch.fert[i + j * CFG.CH]) * 0.7;
-      return [210 + (109 - 210) * f, 192 + (162 - 192) * f, 130 + (78 - 130) * f, MATS[0]];
+      return [210 + (109 - 210) * f + sh, 192 + (162 - 192) * f + sh, 130 + (78 - 130) * f + sh, MATS[0]];
     }
     const m = MATS[t] || MATS[0];
     const amp = SPECKLE[m.cat] || 10;
-    const v = ((Math.imul(i * 31 + j * 517 + 7, 2654435761) >>> 8) % (amp * 2)) - amp;
+    const v = ((Math.imul(i * 31 + j * 517 + 7, 2654435761) >>> 8) % (amp * 2)) - amp + (m.block ? (sh / 2) | 0 : sh);
     return [m.col[0] + v, m.col[1] + v, m.col[2] + v, m];
   };
   for (let j = 0; j < CFG.CH; j++) for (let i = 0; i < CFG.CH; i++) {
@@ -709,8 +710,8 @@ function updateStats() {
   if (statTimer++ % 20 !== 0) return;
   const wxN = { clear: 'CLEAR', rain: 'RAIN', storm: 'STORM', drought: 'DROUGHT' }[world.weather.state];
   statsEl.textContent =
-    `POP ${world.activeN} · TAXA ${aliveSpecies(world)} · FLORA ${world.plantCount}` +
-    ` · WX ${wxN} · SEED ${SEED} · E${Math.round(cam.x)} N${Math.round(-cam.y)}`;
+    `SITE ${SEED} · SOL ${Math.floor(world.tick / 1800)} · POP ${world.activeN} · TAXA ${aliveSpecies(world)}` +
+    ` · FLORA ${world.plantCount} · WX ${wxN} · E${Math.round(cam.x)} N${Math.round(-cam.y)}`;
 }
 
 // ---------- hotbar + material menu + designer ----------
@@ -986,6 +987,44 @@ function checkDiscovery() {
     }
   }
   if (Math.abs(cam.x) > CFG.FAR || Math.abs(cam.y) > CFG.FAR) unlock('farlands');
+}
+
+// ---------- boot sequence ----------
+const bootEl = document.getElementById('boot');
+const bootText = document.getElementById('bootText');
+const BOOT_LINES = [
+  'DEPT. OF EXOBIOLOGY — DIVISION 9',
+  'REMOTE BIOSPHERE OBSERVATION CONSOLE v2.6',
+  'EST. 1994 — CLEARANCE: PROVISIONAL',
+  '',
+  `CONNECTING TO SURVEY SITE #${SEED} ....... OK`,
+  'BIOSIGN TELEMETRY ..................... OK',
+  'TERRAFORM ACTUATORS ................... OK',
+  'PRIOR SURVEY DATA ............ [CORRUPTED]',
+  '',
+  'OBSERVER ON DUTY.',
+];
+let bootDone = false;
+function endBoot() {
+  if (bootDone) return;
+  bootDone = true;
+  bootEl.style.opacity = '0';
+  setTimeout(() => bootEl.remove(), 550);
+}
+{
+  let li = 0, chi = 0, out = '';
+  const typeTick = () => {
+    if (bootDone) return;
+    if (li >= BOOT_LINES.length) { setTimeout(endBoot, 700); return; }
+    const line = BOOT_LINES[li];
+    chi += 3;
+    if (chi >= line.length) { out += line + '\n'; li++; chi = 0; setTimeout(typeTick, line ? 90 : 30); }
+    else setTimeout(typeTick, 12);
+    bootText.textContent = out + line.slice(0, chi);
+  };
+  typeTick();
+  bootEl.addEventListener('pointerdown', endBoot);
+  addEventListener('keydown', endBoot, { once: true });
 }
 
 // ---------- loop ----------
