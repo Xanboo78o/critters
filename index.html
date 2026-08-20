@@ -5,80 +5,111 @@
 <title>critters</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <style>
-  html,body { margin:0; height:100%; overflow:hidden; background:#b3a180; font-family: system-ui, sans-serif; }
+  @font-face { font-family:'Pixel'; src:url('fonts/Grand9K-Pixel.ttf'); }
+  html,body { margin:0; height:100%; overflow:hidden; background:#141612;
+    font-family:'Pixel',monospace; image-rendering:pixelated; }
   #cv { position:fixed; inset:0; display:block; }
-  .bar { position:fixed; display:flex; gap:6px; padding:6px 8px; background:#4a4032e6; border-radius:14px; box-shadow:0 2px 10px #00000030; }
-  #tools { top:10px; left:50%; transform:translateX(-50%); }
-  #speed { top:10px; right:10px; }
-  #brushSlider { width:90px; accent-color:#8a9a56; align-self:center; }
-  #matMenu { position:fixed; top:62px; left:50%; transform:translateX(-50%); width:470px;
-    background:#4a4032ee; border-radius:14px; padding:10px 12px; display:none; color:#efe6cf;
-    box-shadow:0 2px 10px #00000030; }
+  .bar { position:fixed; display:flex; gap:4px; padding:5px 6px; background:#20241d;
+    border:2px solid #565b4e; box-shadow:0 0 0 2px #0c0d0a, 3px 3px 0 #0c0d0a; }
+  #tools { top:8px; left:50%; transform:translateX(-50%); }
+  #speed { top:8px; right:8px; }
+  button { border:2px solid #565b4e; background:#181b16; color:#9fd47a; font-family:'Pixel',monospace;
+    font-size:13px; min-width:32px; height:32px; cursor:pointer; padding:0 6px; text-transform:uppercase; }
+  button:hover { background:#242821; }
+  button.on { background:#9fd47a; color:#141612; border-color:#c9e8b0; }
+  .sep { width:2px; background:#565b4e; margin:2px 2px; }
+  #brushSlider { width:80px; accent-color:#9fd47a; align-self:center; }
+  #stats { position:fixed; left:8px; bottom:8px; color:#9fd47a; background:#20241de6;
+    border:2px solid #565b4e; padding:5px 10px; font-size:12px; text-transform:uppercase; }
+  #hint { position:fixed; right:8px; bottom:52px; color:#9fd47a66; font-size:11px; text-transform:uppercase; }
+  #toasts { position:fixed; bottom:96px; left:50%; transform:translateX(-50%); display:flex;
+    flex-direction:column; align-items:center; gap:5px; pointer-events:none; }
+  .toast { background:#20241de6; color:#d8e8c0; border:2px solid #565b4e; padding:6px 12px;
+    font-size:12px; display:flex; gap:8px; align-items:center; text-transform:uppercase; }
+  .toast .chip { width:10px; height:10px; flex:none; }
+  .toast.gold { border-color:#c9a94f; color:#e8d79a; box-shadow:0 0 10px #c9a94f33; }
+  #panel { position:fixed; top:52px; right:8px; width:216px; background:#20241dee; color:#d8e8c0;
+    border:2px solid #565b4e; box-shadow:3px 3px 0 #0c0d0a; padding:10px 12px; font-size:12px; display:none; }
+  #panel h2 { margin:0 0 2px; font-size:16px; text-transform:uppercase; }
+  #panel .sub { opacity:.7; font-size:11px; margin-bottom:8px; text-transform:uppercase; }
+  .bar-row { margin:4px 0; }
+  .bar-row .lbl { display:flex; justify-content:space-between; font-size:10px; opacity:.85; text-transform:uppercase; }
+  .bar-row .tr { height:6px; background:#0c0d0a; overflow:hidden; margin-top:2px; border:1px solid #3a3e34; }
+  .bar-row .fl { height:100%; }
+  #achievements { position:fixed; top:52px; right:8px; width:250px; max-height:70vh; overflow-y:auto;
+    background:#20241dee; color:#d8e8c0; border:2px solid #565b4e; box-shadow:3px 3px 0 #0c0d0a;
+    padding:10px 12px; font-size:12px; display:none; }
+  #achievements h2 { margin:0 0 8px; font-size:14px; text-transform:uppercase; color:#9fd47a; }
+  .ach { padding:5px 7px; margin:4px 0; background:#0c0d0a55; opacity:.4; border-left:3px solid #3a3e34; }
+  .ach.got { opacity:1; border-left-color:#c9a94f; background:#3a341f55; }
+  .ach b { display:block; font-size:12px; text-transform:uppercase; }
+  .ach span { font-size:10px; opacity:.75; }
+  #hotbar { position:fixed; bottom:8px; left:50%; transform:translateX(-50%); display:flex; gap:4px;
+    padding:5px 6px; background:#20241d; border:2px solid #565b4e; box-shadow:3px 3px 0 #0c0d0a; }
+  .slot { width:38px; height:38px; border:2px solid #565b4e; background:#181b16; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; position:relative; }
+  .slot.sel { border-color:#9fd47a; box-shadow:0 0 6px #9fd47a55; }
+  .slot .chip { width:22px; height:22px; }
+  .slot .num { position:absolute; top:0; left:2px; font-size:9px; color:#9fd47a88; }
+  #matMenu { position:fixed; bottom:60px; left:50%; transform:translateX(-50%); width:500px;
+    background:#20241dee; border:2px solid #565b4e; box-shadow:3px 3px 0 #0c0d0a; padding:10px;
+    display:none; color:#d8e8c0; }
   #matTabs { display:flex; gap:4px; margin-bottom:8px; flex-wrap:wrap; }
-  #matTabs button { width:auto; padding:0 12px; height:26px; font-size:12px; border:0; border-radius:8px;
-    background:#5d5140; color:#efe6cf; cursor:pointer; }
-  #matTabs button.on { background:#8a9a56; }
-  #matGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
-  .mat { display:flex; align-items:center; gap:7px; background:#5d5140; border:0; border-radius:8px;
-    padding:7px 9px; color:#efe6cf; font-size:12px; cursor:pointer; text-align:left; }
-  .mat:hover { background:#6d5f4a; }
-  .mat.on { background:#8a9a56; }
-  .mat .chip { width:15px; height:15px; border-radius:4px; flex:none; box-shadow: inset 0 0 0 1.5px #00000028; }
-  .bar button { border:0; border-radius:9px; background:#5d5140; color:#efe6cf; font-size:17px; width:38px; height:38px; cursor:pointer; }
-  .bar button.on { background:#8a9a56; }
-  .bar button:hover { background:#6d5f4a; }
-  .bar button.on:hover { background:#93a55e; }
-  #stats { position:fixed; left:12px; bottom:10px; color:#efe6cf; background:#4a4032cc; padding:6px 12px; border-radius:10px; font-size:13px; }
-  #hint { position:fixed; right:12px; bottom:10px; color:#efe6cfaa; font-size:12px; text-shadow:0 1px 2px #00000040; }
-  #toasts { position:fixed; bottom:52px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; pointer-events:none; }
-  .toast { background:#4a4032e6; color:#efe6cf; padding:7px 14px; border-radius:10px; font-size:13px; display:flex; gap:8px; align-items:center; animation:pop .18s ease-out; }
-  .toast .chip { width:12px; height:12px; border-radius:50%; flex:none; }
-  @keyframes pop { from { transform:scale(.8); opacity:0 } }
-  #panel { position:fixed; top:60px; right:10px; width:212px; background:#4a4032ee; color:#efe6cf; border-radius:14px; padding:12px 14px; font-size:13px; display:none; }
-  #panel h2 { margin:0 0 2px; font-size:19px; }
-  #panel .sub { opacity:.75; font-size:12px; margin-bottom:8px; }
-  .bar-row { margin:5px 0; }
-  .bar-row .lbl { display:flex; justify-content:space-between; font-size:11px; opacity:.85; }
-  .bar-row .tr { height:7px; border-radius:4px; background:#00000038; overflow:hidden; margin-top:2px; }
-  .bar-row .fl { height:100%; border-radius:4px; }
-  .toast.gold { background:#5a4c2ae6; box-shadow:0 0 12px #c9a94f55; }
-  #achievements { position:fixed; top:60px; right:10px; width:240px; max-height:70vh; overflow-y:auto;
-    background:#4a4032ee; color:#efe6cf; border-radius:14px; padding:12px 14px; font-size:13px; display:none; }
-  #achievements h2 { margin:0 0 8px; font-size:16px; }
-  .ach { padding:6px 8px; border-radius:8px; margin:4px 0; background:#00000026; opacity:.45; }
-  .ach.got { opacity:1; background:#5a4c2a66; }
-  .ach b { display:block; font-size:13px; }
-  .ach span { font-size:11px; opacity:.8; }
+  #matTabs button { height:24px; font-size:11px; }
+  #matGrid { display:grid; grid-template-columns:repeat(4,1fr); gap:5px; }
+  .mat { display:flex; align-items:center; gap:6px; font-size:11px; text-align:left; height:30px; }
+  .mat .chip { width:14px; height:14px; flex:none; }
+  #designer { position:fixed; bottom:60px; left:50%; transform:translateX(-50%); width:340px;
+    background:#20241dee; border:2px solid #565b4e; box-shadow:3px 3px 0 #0c0d0a; padding:10px 14px;
+    display:none; color:#d8e8c0; font-size:11px; }
+  #designer h2 { margin:0 0 6px; font-size:14px; text-transform:uppercase; color:#9fd47a; }
+  .dg { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .dg label { width:70px; text-transform:uppercase; font-size:10px; }
+  .dg input { flex:1; accent-color:#9fd47a; }
+  #designer .row { display:flex; gap:6px; margin-top:8px; }
 </style>
 </head>
 <body>
 <canvas id="cv"></canvas>
 <div id="tools" class="bar">
-  <button data-tool="look" class="on" title="look / inspect (1)">👁</button>
-  <button data-tool="wall" title="wall (2)">🧱</button>
-  <button data-tool="water" title="water (3)">💧</button>
-  <button data-tool="fert+" title="fertile soil — food grows (4)">🌿</button>
-  <button data-tool="fert-" title="famine — soil dies (5)">🏜️</button>
-  <button data-tool="erase" title="erase terrain (6)">🧽</button>
-  <button id="matBtn" title="the material table (m)">🧪</button>
-  <input type="range" id="brushSlider" min="20" max="280" value="55" title="brush size ( [ and ] )">
+  <button data-tool="look" class="on" title="LOOK / INSPECT (L)">👁</button>
+  <div class="sep"></div>
+  <button id="modeBtn" title="TERRAFORM paints the ground · PLACE drops objects (T)">TERRA</button>
+  <button data-shape="circle" class="shp on" title="round brush">●</button>
+  <button data-shape="square" class="shp" title="square brush">■</button>
+  <button data-shape="ring" class="shp" title="ring brush">○</button>
+  <button data-shape="spray" class="shp" title="spray brush">⁘</button>
+  <input type="range" id="brushSlider" min="20" max="280" value="55" title="BRUSH SIZE [ ]">
+  <div class="sep"></div>
+  <button data-tool="fert+" title="FERTILE SOIL">F+</button>
+  <button data-tool="fert-" title="FAMINE">F-</button>
+  <button data-tool="erase" title="ERASE (X)">✕</button>
+  <button data-tool="det" title="DETONATOR — fires every charge under the brush">DET</button>
 </div>
+<div id="speed" class="bar">
+  <button data-spd="0" title="HOLD (SPACE)">⏸</button>
+  <button data-spd="1" class="on">▶</button>
+  <button data-spd="4" title="4X">▶▶</button>
+  <button data-spd="16" title="16X">▶▶▶</button>
+  <button id="achBtn" title="MISSION LOG">🏆</button>
+</div>
+<div id="stats"></div>
+<div id="hint">DRAG LOOK · SCROLL ZOOM · 1-9 HOTBAR · M TABLE</div>
+<div id="toasts"></div>
+<div id="panel"></div>
+<div id="achievements"></div>
+<div id="hotbar"></div>
 <div id="matMenu">
   <div id="matTabs"></div>
   <div id="matGrid"></div>
 </div>
-<div id="speed" class="bar">
-  <button data-spd="0" title="pause (space)">⏸</button>
-  <button data-spd="1" class="on">▶</button>
-  <button data-spd="4" title="4x">▶▶</button>
-  <button data-spd="16" title="16x">▶▶▶</button>
-  <button id="achBtn" title="achievements">🏆</button>
+<div id="designer">
+  <h2>SPECIMEN DESIGNER</h2>
+  <div id="dgSliders"></div>
+  <div class="row">
+    <button id="dgSummon" style="flex:1">ARM SPECIMEN — CLICK MAP TO RELEASE</button>
+  </div>
 </div>
-<div id="achievements"></div>
-<div id="stats"></div>
-<div id="hint">drag to look · scroll to zoom · click a critter</div>
-<div id="toasts"></div>
-<div id="panel"></div>
 <script src="sim.js"></script>
 <script src="main.js"></script>
 </body>
